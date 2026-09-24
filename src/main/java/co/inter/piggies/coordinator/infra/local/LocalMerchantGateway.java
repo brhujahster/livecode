@@ -2,12 +2,10 @@ package co.inter.piggies.coordinator.infra.local;
 
 import co.inter.piggies.coordinator.domain.FailureReason;
 import co.inter.piggies.coordinator.domain.MerchantGateway;
-import co.inter.piggies.merchant.facade.CreditCommand;
 import co.inter.piggies.merchant.facade.MerchantFacade;
 import jakarta.inject.Singleton;
 
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Chama o módulo merchant no mesmo processo. Na extração, vira um cliente HTTP de merchant.openapi.yaml.
@@ -26,10 +24,5 @@ class LocalMerchantGateway implements MerchantGateway {
         return merchants.findByCnpj(merchantCnpj)
                 .map(merchant -> merchant.active() ? Optional.<FailureReason>empty() : Optional.of(FailureReason.MERCHANT_INACTIVE))
                 .orElse(Optional.of(FailureReason.MERCHANT_NOT_FOUND));
-    }
-
-    @Override
-    public void credit(UUID paymentId, String merchantCnpj, long amount) {
-        merchants.credit(new CreditCommand(paymentId, merchantCnpj, amount));
     }
 }

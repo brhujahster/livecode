@@ -2,6 +2,7 @@ package co.inter.piggies.coordinator.orchestration;
 
 import co.inter.piggies.coordinator.domain.FailureReason;
 import co.inter.piggies.coordinator.domain.MerchantGateway;
+import co.inter.piggies.coordinator.domain.PaymentEventPublisher;
 import co.inter.piggies.coordinator.domain.PaymentIntent;
 import co.inter.piggies.coordinator.domain.PaymentService;
 import co.inter.piggies.coordinator.domain.ReserveGateway;
@@ -22,7 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Leva um pagamento aceito até CONFIRMED ou FAILED. Reserva e validação do merchant rodam em paralelo.
+ * Leva um pagamento aceito até FAILED ou até DEBITED com o evento de débito publicado. Reserva e validação do
+ * merchant rodam em paralelo. O CONFIRMED vem depois, quando o merchant avisa que creditou.
  * Uma falha técnica em qualquer etapa deixa o pagamento no estágio em que estava, para ser retomado depois.
  */
 @Singleton
@@ -35,19 +37,22 @@ public class PaymentOrchestrator {
     private final PaymentService payments;
     private final ReserveGateway reserve;
     private final MerchantGateway merchant;
+    private final PaymentEventPublisher events;
     private final ExecutorService executor;
 
     @Inject
-    public PaymentOrchestrator(PaymentService payments, ReserveGateway reserve, MerchantGateway merchant) {
-        this(payments, reserve, merchant,
+    public PaymentOrchestrator(PaymentService payments, ReserveGateway reserve, MerchantGateway merchant,
+                               PaymentEventPublisher events) {
+        this(payments, reserve, merchant, events,
                 Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("payment-", 0).factory()));
     }
 
     PaymentOrchestrator(PaymentService payments, ReserveGateway reserve, MerchantGateway merchant,
-                        ExecutorService executor) {
+                        PaymentEventPublisher events, ExecutorService executor) {
         this.payments = payments;
         this.reserve = reserve;
         this.merchant = merchant;
+        this.events = events;
         this.executor = executor;
     }
 
@@ -100,8 +105,7 @@ public class PaymentOrchestrator {
         }
 
         reserve.confirm(paymentId);
-        payments.markDebited(paymentId);
-        merchant.credit(paymentId, intent.getMerchantCnpj(), intent.getAmount());
-        payments.confirm(paymentId);
+        PaymentIntent debited = payments.markDebited(paymentId);
+        events.debited(debited);
     }
 }

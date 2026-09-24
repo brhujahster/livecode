@@ -132,3 +132,28 @@ Escolhido: fechar a S1 com a demo por `curl`, limpar e commitar S0 e S1, depois 
   - Criado `ApiProblemErrorResponseProcessor`, que substitui o `ProblemErrorResponseProcessor` do problem-json. `400` sai com `code` `INVALID_REQUEST`; outros status usam o nome do status como `code`. Em `5xx` o `detail` é omitido para não expor detalhes internos.
   - `PaymentsHttpIT` passa a exigir `application/problem+json`, `code`, `status` numérico, `title` e `detail` nos `400`.
 - `./mvnw clean test` verde, com 60 testes.
+
+### S2 — Eventos (T030–T035)
+
+- Records dos eventos, uma cópia por módulo, sem classe compartilhada: `coordinator/infra/messaging` e `merchant/infra/messaging` têm cada um seu `PaymentDebited` e `PaymentConfirmed`.
+- `EventSchemaTest`, com `json-schema-validator` 3.0.7:
+  - o que cada módulo publica passa no JSON Schema do contrato;
+  - cada consumidor lê o exemplo do contrato com a própria cópia do record;
+  - o schema recusa valor fracionário, campo extra e `eventVersion` diferente de 1.
+- Coordinator:
+  - nova porta `PaymentEventPublisher` no domínio. O orquestrador grava `DEBITED` e só então publica `spp.payment.debited`, com chave `paymentId`.
+  - `MerchantGateway` perdeu o `credit`.
+  - `PaymentConfirmedListener` chama `PaymentService.confirmCredited`, que ignora confirmação repetida, de pagamento `FAILED` ou de pagamento desconhecido, para o consumidor não ficar preso na mesma mensagem.
+- Merchant: `PaymentDebitedListener` credita pela fachada e publica `spp.payment.confirmed`.
+- Entrega nos dois listeners:
+  - offset `SYNC_PER_RECORD`, confirmado só depois de o método terminar;
+  - erro tenta de novo com backoff exponencial (5 vezes), em vez de pular a mensagem;
+  - producers síncronos com `acks=all`.
+
+  Se as tentativas se esgotarem, o pagamento fica `DEBITED` e o job da S4 republica.
+- Tópicos criados na inicialização por beans `NewTopic`, cada módulo o tópico que publica, com partições e réplicas no padrão do broker.
+- Testes:
+  - `AbstractContainersTest` passou para `hbm2ddl.auto=create`: com listeners Kafka em todos os contextos, o `DROP` do `create-drop` ao fechar o contexto voltaria a arriscar o travamento do Prompt 7;
+  - os tópicos ganham sufixo aleatório por contexto, para eventos que sobram de uma classe de teste não serem consumidos pela seguinte;
+  - `PaymentJourneyIT` confere que A pagando X gera exatamente um `spp.payment.confirmed` com `paymentId`, CNPJ, valor e `creditedAt`, e que pagamentos `FAILED` não geram evento.
+- `./mvnw clean test` verde, com 69 testes em cerca de 23 segundos.

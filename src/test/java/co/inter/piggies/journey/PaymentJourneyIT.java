@@ -5,15 +5,21 @@ import co.inter.piggies.reserve.facade.AccountView;
 import co.inter.piggies.reserve.facade.ReservationStatus;
 import co.inter.piggies.reserve.facade.ReserveFacade;
 import co.inter.piggies.support.AbstractContainersTest;
+import co.inter.piggies.support.TopicRecords;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.core.type.Argument;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.annotation.Client;
+import io.micronaut.serde.ObjectMapper;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -30,7 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Cenários de aceite de US1 e US2 de ponta a ponta, com os dados iniciais (Clientes A e B, Merchants X e Y).
+ * Cenários de aceite de US1, US2 e US3 de ponta a ponta, com os dados iniciais (Clientes A e B, Merchants X e Y).
+ * O crédito e o fechamento passam pelo Kafka.
  */
 @MicronautTest(transactional = false)
 class PaymentJourneyIT extends AbstractContainersTest {
@@ -44,6 +51,12 @@ class PaymentJourneyIT extends AbstractContainersTest {
 
     @Inject
     MerchantFacade merchants;
+
+    @Inject
+    ObjectMapper json;
+
+    @Value("${spp.topics.payment-confirmed}")
+    String confirmedTopic;
 
     @Test
     void clientAPays100ToMerchantX() {
@@ -61,6 +74,12 @@ class PaymentJourneyIT extends AbstractContainersTest {
             assertThat(receivable.merchantCnpj()).isEqualTo(MERCHANT_X);
         });
         assertThat(merchants.findByCnpj(MERCHANT_X).orElseThrow().balance()).isEqualTo(merchantBefore + 100);
+        assertThat(confirmedEvents(paymentId)).singleElement().satisfies(event -> assertThat(event)
+                .containsEntry("paymentId", paymentId.toString())
+                .containsEntry("merchantCnpj", MERCHANT_X)
+                .containsEntry("amount", 100)
+                .containsEntry("eventVersion", 1)
+                .containsKeys("eventId", "creditedAt"));
     }
 
     @Test
@@ -72,6 +91,7 @@ class PaymentJourneyIT extends AbstractContainersTest {
         assertThat(awaitFinal(paymentId)).containsEntry("status", "FAILED").containsEntry("failureReason", "INSUFFICIENT_BALANCE");
         assertThat(account(CLIENT_B_ACCOUNT)).isEqualTo(before);
         assertThat(merchants.findReceivable(paymentId)).isEmpty();
+        assertThat(confirmedEvents(paymentId)).isEmpty();
     }
 
     @Test
@@ -86,6 +106,7 @@ class PaymentJourneyIT extends AbstractContainersTest {
         assertThat(account(CLIENT_A_ACCOUNT).balance()).isEqualTo(before.balance());
         assertThat(account(CLIENT_A_ACCOUNT).availableBalance()).isEqualTo(before.availableBalance());
         assertThat(merchants.findReceivable(paymentId)).isEmpty();
+        assertThat(confirmedEvents(paymentId)).isEmpty();
     }
 
     @Test
@@ -115,8 +136,24 @@ class PaymentJourneyIT extends AbstractContainersTest {
         return paymentId;
     }
 
+    private List<Map<String, Object>> confirmedEvents(UUID paymentId) {
+        return TopicRecords.readAll(KAFKA.getBootstrapServers(), confirmedTopic).stream()
+                .filter(record -> paymentId.toString().equals(record.key()))
+                .map(record -> parse(record.value()))
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parse(String event) {
+        try {
+            return json.readValue(event, Map.class);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private Map<String, Object> awaitFinal(UUID paymentId) {
-        return await().atMost(Duration.ofSeconds(10)).until(
+        return await().atMost(Duration.ofSeconds(20)).until(
                 () -> http.toBlocking().retrieve(HttpRequest.GET("/v1/payments/" + paymentId), Argument.mapOf(String.class, Object.class)),
                 payment -> !"PROCESSING".equals(payment.get("status")));
     }

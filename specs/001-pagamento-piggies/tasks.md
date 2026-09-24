@@ -85,14 +85,14 @@ Objetivo: `POST /v1/payments` responde `202` e o pagamento chega a `CONFIRMED` o
 
 Objetivo: crédito e fechamento passam por Kafka, com eventos validados contra o schema.
 
-- [ ] **T030 [P]** Records dos eventos, uma cópia por módulo (sem classe compartilhada): `coordinator/infra/messaging` (`PaymentDebited`, `PaymentConfirmed`) e `merchant/infra/messaging` (idem).
-- [ ] **T031 [P] [US3]** Teste `contracts/EventSchemaTest`: eventos serializados pelos dois módulos passam em `contracts/events/*.schema.json`; valor fracionário e campo extra são recusados.
-- [ ] **T032** Coordinator: producer de `spp.payment.debited` (chave `paymentId`). Orquestrador passa a gravar `DEBITED` e publicar; `credit` sai do `MerchantGateway`.
-- [ ] **T033** Merchant: consumer de `spp.payment.debited` → `credit` → publica `spp.payment.confirmed`; offset confirmado só depois de publicar (D6).
-- [ ] **T034** Coordinator: listener de `spp.payment.confirmed` → `CONFIRMED`. Evento de pagamento já final é ignorado.
-- [ ] **T035 [US3]** Atualizar `PaymentJourneyIT`: A paga 100 a X gera exatamente um `spp.payment.confirmed` com `paymentId`, CNPJ, valor e `creditedAt`; pagamentos `FAILED` não geram evento.
+- [x] **T030 [P]** Records dos eventos, uma cópia por módulo (sem classe compartilhada): `coordinator/infra/messaging` (`PaymentDebited`, `PaymentConfirmed`) e `merchant/infra/messaging` (idem).
+- [x] **T031 [P] [US3]** Teste `contracts/EventSchemaTest`: eventos serializados pelos dois módulos passam em `contracts/events/*.schema.json`; valor fracionário e campo extra são recusados.
+- [x] **T032** Coordinator: producer de `spp.payment.debited` (chave `paymentId`). Orquestrador passa a gravar `DEBITED` e publicar; `credit` sai do `MerchantGateway`.
+- [x] **T033** Merchant: consumer de `spp.payment.debited` → `credit` → publica `spp.payment.confirmed`; offset confirmado só depois de publicar (D6).
+- [x] **T034** Coordinator: listener de `spp.payment.confirmed` → `CONFIRMED`. Evento de pagamento já final é ignorado.
+- [x] **T035 [US3]** Atualizar `PaymentJourneyIT`: A paga 100 a X gera exatamente um `spp.payment.confirmed` com `paymentId`, CNPJ, valor e `creditedAt`; pagamentos `FAILED` não geram evento.
 
-**Checkpoint S2:** enunciado coberto de ponta a ponta.
+**Checkpoint S2:** enunciado coberto de ponta a ponta. Atingido em 24/09/2026 (69 testes).
 
 ## S3 — Idempotência e concorrência (US4, casos de borda)
 

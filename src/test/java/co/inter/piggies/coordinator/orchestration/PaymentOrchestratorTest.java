@@ -3,6 +3,7 @@ package co.inter.piggies.coordinator.orchestration;
 import co.inter.piggies.coordinator.domain.FailureReason;
 import co.inter.piggies.coordinator.domain.MerchantGateway;
 import co.inter.piggies.coordinator.domain.NewPayment;
+import co.inter.piggies.coordinator.domain.PaymentEventPublisher;
 import co.inter.piggies.coordinator.domain.PaymentIntent;
 import co.inter.piggies.coordinator.domain.PaymentService;
 import co.inter.piggies.coordinator.domain.PaymentStatus;
@@ -31,7 +32,9 @@ class PaymentOrchestratorTest {
     private final PaymentService payments = new PaymentService(new InMemoryPaymentIntentStore());
     private final FakeReserve reserve = new FakeReserve();
     private final FakeMerchant merchant = new FakeMerchant();
-    private final PaymentOrchestrator orchestrator = new PaymentOrchestrator(payments, reserve, merchant, executor);
+    private final FakeEvents events = new FakeEvents();
+    private final PaymentOrchestrator orchestrator =
+            new PaymentOrchestrator(payments, reserve, merchant, events, executor);
 
     @AfterEach
     void shutdown() {
@@ -39,14 +42,18 @@ class PaymentOrchestratorTest {
     }
 
     @Test
-    void confirmsWhenReserveAndMerchantSucceed() {
+    void debitsAndPublishesWhenReserveAndMerchantSucceed() {
         UUID id = accept();
 
         orchestrator.process(id);
 
-        assertThat(intent(id).status()).isEqualTo(PaymentStatus.CONFIRMED);
+        assertThat(intent(id).getStage()).isEqualTo(Stage.DEBITED);
+        assertThat(intent(id).status()).isEqualTo(PaymentStatus.PROCESSING);
         assertThat(reserve.calls).containsExactly("reserve", "confirm");
-        assertThat(merchant.credits).containsExactly(id);
+        assertThat(events.debited).singleElement().satisfies(debited -> {
+            assertThat(debited.getId()).isEqualTo(id);
+            assertThat(debited.getStage()).as("publica só depois de gravar DEBITED").isEqualTo(Stage.DEBITED);
+        });
     }
 
     @Test
@@ -59,7 +66,7 @@ class PaymentOrchestratorTest {
         assertThat(intent(id).status()).isEqualTo(PaymentStatus.FAILED);
         assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.INSUFFICIENT_BALANCE);
         assertThat(reserve.calls).containsExactly("reserve");
-        assertThat(merchant.credits).isEmpty();
+        assertThat(events.debited).isEmpty();
     }
 
     @Test
@@ -71,7 +78,7 @@ class PaymentOrchestratorTest {
 
         assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.MERCHANT_INACTIVE);
         assertThat(reserve.calls).containsExactly("reserve", "release");
-        assertThat(merchant.credits).isEmpty();
+        assertThat(events.debited).isEmpty();
     }
 
     @Test
@@ -105,12 +112,12 @@ class PaymentOrchestratorTest {
         orchestrator.process(id);
 
         assertThat(intent(id).getStage()).isEqualTo(Stage.ACCEPTED);
-        assertThat(merchant.credits).isEmpty();
+        assertThat(events.debited).isEmpty();
     }
 
     @Test
-    void technicalFailureOnCreditKeepsThePaymentDebited() {
-        merchant.explodeOnCredit = true;
+    void publishFailureKeepsThePaymentDebited() {
+        events.explode = true;
         UUID id = accept();
 
         orchestrator.process(id);
@@ -127,9 +134,9 @@ class PaymentOrchestratorTest {
 
         orchestrator.process(id);
 
-        assertThat(intent(id).status())
-                .as("se as duas etapas rodassem em sequência, a barreira estouraria o tempo e o pagamento não confirmaria")
-                .isEqualTo(PaymentStatus.CONFIRMED);
+        assertThat(intent(id).getStage())
+                .as("se as duas etapas rodassem em sequência, a barreira estouraria o tempo e o pagamento não seria debitado")
+                .isEqualTo(Stage.DEBITED);
     }
 
     @Test
@@ -194,9 +201,7 @@ class PaymentOrchestratorTest {
 
     private static final class FakeMerchant implements MerchantGateway {
 
-        final List<UUID> credits = new ArrayList<>();
         Optional<FailureReason> failure = Optional.empty();
-        boolean explodeOnCredit;
         CyclicBarrier barrier;
 
         @Override
@@ -204,13 +209,19 @@ class PaymentOrchestratorTest {
             await(barrier);
             return failure;
         }
+    }
+
+    private static final class FakeEvents implements PaymentEventPublisher {
+
+        final List<PaymentIntent> debited = new ArrayList<>();
+        boolean explode;
 
         @Override
-        public synchronized void credit(UUID paymentId, String merchantCnpj, long amount) {
-            if (explodeOnCredit) {
-                throw new IllegalStateException("merchant fora do ar");
+        public synchronized void debited(PaymentIntent intent) {
+            if (explode) {
+                throw new IllegalStateException("kafka fora do ar");
             }
-            credits.add(paymentId);
+            debited.add(intent);
         }
     }
 }
