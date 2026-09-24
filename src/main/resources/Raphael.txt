@@ -1,0 +1,19 @@
+Para o desenvolvimento do projeto, utilizei o prompt abaixo para gerar o código das entidades de forma automática.
+O prompt foi elaborado para fornecer instruções claras e detalhadas sobre como criar as entidades, incluindo os atributos, tipos de dados, relacionamentos
+e anotações necessárias para o mapeamento com o banco de dados. A seguir, apresento o prompt utilizado:
+
+src/main/java/co/inter/piggies/merchant/entity
+
+Crie o código das entidades para o projeto, considerando os seguintes requisitos:
+1. Cada entidade deve ser representada como uma classe Java, com o nome da classe em PascalCase e o nome do arquivo correspondente.
+2. Cada atributo da entidade deve ser representado como um campo privado na classe, com o nome do atributo em camelCase e o tipo de dado apropriado (por exemplo, String, Integer, Double, LocalDate, etc.).
+3. Para cada atributo, inclua os métodos getters e setters públicos correspondentes.
+4. Utilize anotações do JPA (Java Persistence API) para mapear as entidades para o banco de dados, incluindo @Entity, @Table, @Id, @GeneratedValue, @Column, @ManyToOne, @OneToMany, @JoinColumn, entre outras, conforme necessário.
+5. Defina os relacionamentos entre as entidades, como @ManyToOne, @OneToMany, @OneToOne, etc., de acordo com os requisitos do projeto.
+6. Inclua construtores padrão e construtores parametrizados para cada entidade, permitindo a criação de objetos com ou sem parâmetros.
+7. Implemente o método toString() para cada entidade, retornando uma representação em string dos atributos da entidade.
+8. Adicione validações de dados, como @NotNull, @Size, @Min, @Max, entre outras, para garantir a integridade dos dados.
+9. Utilize pacotes apropriados para organizar as entidades, seguindo a estrutura do projeto.
+10. Inclua comentários explicativos no código, descrevendo a finalidade de cada classe, atributo e método, para facilitar a
+compreensão do código por outros desenvolvedores.
+
