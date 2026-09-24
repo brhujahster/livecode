@@ -238,6 +238,62 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
       </plugin>
+
+      <plugin>
+        <groupId>org.openapitools</groupId>
+        <artifactId>openapi-generator-maven-plugin</artifactId>
+        <version>7.10.0</version>
+
+        <configuration>
+          <generatorName>spring</generatorName>
+          <generateApiTests>true</generateApiTests>
+          <generateModelTests>true</generateModelTests>
+          <configOptions>
+            <interfaceOnly>true</interfaceOnly>
+            <useSpringBoot3>true</useSpringBoot3>
+            <dateLibrary>java8</dateLibrary>
+          </configOptions>
+        </configuration>
+
+        <executions>
+          <execution>
+            <id>generate-merchants-api</id>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+            <configuration>
+              <inputSpec>${project.basedir}/src/main/resources/openapi/merchants.openapi.yaml</inputSpec>
+              <output>${project.build.directory}/generated-sources/openapi/merchants</output>
+              <apiPackage>com.example.piggies.api.merchants</apiPackage>
+              <modelPackage>com.example.piggies.api.merchants.model</modelPackage>
+            </configuration>
+          </execution>
+          <execution>
+            <id>generate-payments-api</id>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+            <configuration>
+              <inputSpec>${project.basedir}/src/main/resources/openapi/payments.openapi.yaml</inputSpec>
+              <output>${project.build.directory}/generated-sources/openapi/payments</output>
+              <apiPackage>com.example.piggies.api.payments</apiPackage>
+              <modelPackage>com.example.piggies.api.payments.model</modelPackage>
+            </configuration>
+          </execution>
+          <execution>
+            <id>generate-reservations-api</id>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+            <configuration>
+              <inputSpec>${project.basedir}/src/main/resources/openapi/reservations.openapi.yaml</inputSpec>
+              <output>${project.build.directory}/generated-sources/openapi/reservations</output>
+              <apiPackage>com.example.piggies.api.reservations</apiPackage>
+              <modelPackage>com.example.piggies.api.reservations.model</modelPackage>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

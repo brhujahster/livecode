@@ -24,16 +24,16 @@ Fora desta versão: valor fracionário, decodificação de imagem de QR, cancela
 
 Cada pessoa escreve o contrato do que vai implementar. Os campos congelam ao fim deste bloco.
 
-- [ ] **Dev 1** — `contracts/openapi/payments.openapi.yaml`
+- [ ] **Dev 1** — `src/main/resources/openapi`
   - `POST /v1/payments` → `202` com `paymentId` e `status`
   - `GET /v1/payments/{id}` → intenção e status
   - Body: QR decodificado (`merchantCnpj`, `amount` inteiro) e pagador (`payerCpf`, `payerAgency`, `payerAccount`)
   - Erros em `application/problem+json`
-- [ ] **Dev 2** — `contracts/openapi/reservations.openapi.yaml`
+- [ ] **Dev 2** — `src/main/resources/openapi`
   - `POST /v1/reservations`
   - `POST /v1/reservations/{id}/confirm`
   - `POST /v1/reservations/{id}/release`
-- [ ] **Dev 3** — `contracts/openapi/merchants.openapi.yaml`
+- [ ] **Dev 3** — `src/main/resources/openapi`
   - `POST /v1/merchants/validate`
   - `POST /v1/credits`
 - [ ] **Dev 4** — schemas de evento

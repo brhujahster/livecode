@@ -11,7 +11,6 @@
  */
 package co.inter.piggies.merchant.api.model;
 
-import java.util.Objects;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Function;
@@ -19,8 +18,6 @@ import java.util.stream.Collectors;
 import com.fasterxml.jackson.annotation.*;
 import io.micronaut.serde.annotation.Serdeable;
 import jakarta.validation.constraints.*;
-import jakarta.validation.Valid;
-import io.micronaut.core.annotation.Nullable;
 import jakarta.annotation.Generated;
 
 /**
