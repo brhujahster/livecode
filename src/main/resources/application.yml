@@ -1,6 +1,12 @@
 micronaut:
   application:
     name: livecode
+  http:
+    services:
+      reserve:
+        url: ${RESERVE_SERVICE_URL:`http://localhost:8080`}
+      merchant:
+        url: ${MERCHANT_SERVICE_URL:`http://localhost:8080`}
 
 datasources:
   default:
