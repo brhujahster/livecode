@@ -37,16 +37,21 @@ public class ReserveService implements ReserveFacade {
         this.entityManager = entityManager;
     }
 
+    /**
+     * A conta é travada antes de procurar a reserva: dois pedidos com o mesmo {@code paymentId} ficam em fila e o
+     * segundo encontra a reserva gravada pelo primeiro, em vez de reservar de novo e falhar na chave primária.
+     */
     @Override
     @Transactional
     public ReserveResult reserve(ReserveCommand command) {
+        Optional<Account> locked = lockAccount(command.agency(), command.accountNumber());
+
         Optional<Reservation> existing = reservations.findById(command.paymentId());
         if (existing.isPresent()) {
             return new ReserveResult.Reserved(sameRequestOrConflict(existing.get(), command));
         }
 
-        Optional<Account> account = accounts.findByAgencyAndNumber(command.agency(), command.accountNumber())
-                .filter(found -> found.getClient().getCpf().equals(command.cpf()));
+        Optional<Account> account = locked.filter(found -> found.getClient().getCpf().equals(command.cpf()));
         if (account.isEmpty()) {
             return new ReserveResult.Rejected(RejectionReason.PAYER_ACCOUNT_NOT_FOUND);
         }
@@ -105,6 +110,16 @@ public class ReserveService implements ReserveFacade {
                         account.getBalance(),
                         account.getReservedBalance(),
                         account.availableBalance()));
+    }
+
+    private Optional<Account> lockAccount(String agency, String number) {
+        return entityManager.createQuery(
+                        "SELECT a FROM Account a WHERE a.agency = :agency AND a.number = :number", Account.class)
+                .setParameter("agency", agency)
+                .setParameter("number", number)
+                .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+                .getResultStream()
+                .findFirst();
     }
 
     private Reservation lock(UUID paymentId) {

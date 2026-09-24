@@ -1,14 +1,13 @@
 package co.inter.piggies.journey;
 
+import co.inter.piggies.coordinator.support.PaymentRequests;
 import co.inter.piggies.merchant.facade.MerchantFacade;
 import co.inter.piggies.reserve.facade.AccountView;
 import co.inter.piggies.reserve.facade.ReservationStatus;
 import co.inter.piggies.reserve.facade.ReserveFacade;
 import co.inter.piggies.support.AbstractContainersTest;
-import co.inter.piggies.support.TopicRecords;
+import co.inter.piggies.support.TestKafka;
 import io.micronaut.context.annotation.Value;
-import io.micronaut.core.type.Argument;
-import io.micronaut.http.HttpRequest;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.annotation.Client;
 import io.micronaut.serde.ObjectMapper;
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,7 +31,6 @@ import static co.inter.piggies.coordinator.support.PaymentRequests.body;
 import static co.inter.piggies.coordinator.support.PaymentRequests.clientAPays;
 import static co.inter.piggies.coordinator.support.PaymentRequests.post;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 
 /**
  * Cenários de aceite de US1, US2 e US3 de ponta a ponta, com os dados iniciais (Clientes A e B, Merchants X e Y).
@@ -137,7 +134,7 @@ class PaymentJourneyIT extends AbstractContainersTest {
     }
 
     private List<Map<String, Object>> confirmedEvents(UUID paymentId) {
-        return TopicRecords.readAll(KAFKA.getBootstrapServers(), confirmedTopic).stream()
+        return TestKafka.readAll(KAFKA.getBootstrapServers(), confirmedTopic).stream()
                 .filter(record -> paymentId.toString().equals(record.key()))
                 .map(record -> parse(record.value()))
                 .toList();
@@ -153,9 +150,7 @@ class PaymentJourneyIT extends AbstractContainersTest {
     }
 
     private Map<String, Object> awaitFinal(UUID paymentId) {
-        return await().atMost(Duration.ofSeconds(20)).until(
-                () -> http.toBlocking().retrieve(HttpRequest.GET("/v1/payments/" + paymentId), Argument.mapOf(String.class, Object.class)),
-                payment -> !"PROCESSING".equals(payment.get("status")));
+        return PaymentRequests.awaitFinal(http, paymentId);
     }
 
     private AccountView account(String number) {

@@ -17,8 +17,16 @@ import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -152,6 +160,106 @@ class ReserveServiceIT extends AbstractContainersTest {
 
         assertThatThrownBy(() -> reserve.confirm(paymentId)).isInstanceOf(ReservationNotFoundException.class);
         assertThatThrownBy(() -> reserve.release(paymentId)).isInstanceOf(ReservationNotFoundException.class);
+    }
+
+    @Test
+    void reservingTwiceWithTheSameDataReservesOnce() {
+        TestAccount account = newAccount(500);
+        UUID paymentId = UUID.randomUUID();
+        reserve.reserve(account.command(paymentId, 100));
+
+        ReserveResult repeated = reserve.reserve(account.command(paymentId, 100));
+
+        assertThat(repeated).isInstanceOf(ReserveResult.Reserved.class);
+        assertThat(account.view().reservedBalance()).isEqualTo(100);
+    }
+
+    @Test
+    void reservingAgainWithOtherDataIsConflict() {
+        TestAccount account = newAccount(500);
+        UUID paymentId = UUID.randomUUID();
+        reserve.reserve(account.command(paymentId, 100));
+
+        assertThatThrownBy(() -> reserve.reserve(account.command(paymentId, 200)))
+                .isInstanceOfSatisfying(ReservationConflictException.class,
+                        conflict -> assertThat(conflict.code()).isEqualTo(ReservationConflictException.Code.IDEMPOTENCY_CONFLICT));
+        assertThat(account.view().reservedBalance()).isEqualTo(100);
+    }
+
+    @Test
+    void confirmingTwiceDebitsOnce() {
+        TestAccount account = newAccount(500);
+        UUID paymentId = UUID.randomUUID();
+        reserve.reserve(account.command(paymentId, 100));
+        reserve.confirm(paymentId);
+
+        assertThat(reserve.confirm(paymentId).status()).isEqualTo(ReservationStatus.CONFIRMED);
+
+        assertThat(account.view().balance()).isEqualTo(400);
+        assertThat(account.view().reservedBalance()).isZero();
+    }
+
+    @Test
+    void releasingTwiceRestoresOnce() {
+        TestAccount account = newAccount(500);
+        UUID paymentId = UUID.randomUUID();
+        reserve.reserve(account.command(paymentId, 100));
+        reserve.release(paymentId);
+
+        assertThat(reserve.release(paymentId).status()).isEqualTo(ReservationStatus.RELEASED);
+
+        assertThat(account.view().balance()).isEqualTo(500);
+        assertThat(account.view().reservedBalance()).isZero();
+    }
+
+    @Test
+    void concurrentReservationsNeverExceedTheBalance() {
+        TestAccount account = newAccount(500);
+
+        List<ReserveResult> results = concurrently(10, () -> reserve.reserve(account.command(UUID.randomUUID(), 100)));
+
+        assertThat(results).filteredOn(ReserveResult.Reserved.class::isInstance).hasSize(5);
+        assertThat(results).filteredOn(new ReserveResult.Rejected(RejectionReason.INSUFFICIENT_BALANCE)::equals).hasSize(5);
+        assertThat(account.view()).satisfies(view -> {
+            assertThat(view.balance()).isEqualTo(500);
+            assertThat(view.reservedBalance()).isEqualTo(500);
+            assertThat(view.availableBalance()).isZero();
+        });
+    }
+
+    @Test
+    void concurrentReservationsWithTheSamePaymentIdReserveOnce() {
+        TestAccount account = newAccount(500);
+        UUID paymentId = UUID.randomUUID();
+
+        List<ReserveResult> results = concurrently(10, () -> reserve.reserve(account.command(paymentId, 100)));
+
+        assertThat(results).allSatisfy(result -> assertThat(result).isInstanceOf(ReserveResult.Reserved.class));
+        assertThat(account.view().reservedBalance()).isEqualTo(100);
+    }
+
+    /**
+     * Dispara as chamadas juntas, liberadas por uma barreira, e devolve os resultados. Uma exceção em qualquer
+     * chamada falha o teste.
+     */
+    private static <T> List<T> concurrently(int calls, Callable<T> call) {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<T>> futures = IntStream.range(0, calls)
+                    .mapToObj(i -> executor.submit(() -> {
+                        start.await();
+                        return call.call();
+                    }))
+                    .toList();
+            start.countDown();
+            List<T> results = new ArrayList<>();
+            for (Future<T> future : futures) {
+                results.add(future.get(20, TimeUnit.SECONDS));
+            }
+            return results;
+        } catch (Exception e) {
+            throw new AssertionError("chamada concorrente falhou", e);
+        }
     }
 
     private TestAccount newAccount(long balance) {

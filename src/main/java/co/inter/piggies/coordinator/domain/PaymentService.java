@@ -23,11 +23,18 @@ public class PaymentService {
         this.store = store;
     }
 
+    /**
+     * A Idempotency-Key é o id do pagamento. Mesma chave e mesmos dados devolvem o pagamento existente; mesma chave
+     * com outros dados é conflito. Pedidos simultâneos com a mesma chave criam um pagamento só.
+     */
     @Transactional
     public Accepted accept(NewPayment payment) {
-        return store.findById(payment.paymentId())
-                .map(existing -> new Accepted(existing, false))
-                .orElseGet(() -> new Accepted(store.insert(payment.toIntent()), true));
+        boolean created = store.insertIfAbsent(payment.toIntent());
+        PaymentIntent stored = store.findById(payment.paymentId()).orElseThrow();
+        if (!created && !payment.sameDataAs(stored)) {
+            throw new IdempotencyConflictException(payment.paymentId());
+        }
+        return new Accepted(stored, created);
     }
 
     @Transactional

@@ -16,6 +16,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -53,7 +54,7 @@ public class Reservation {
         this.account = account;
         this.amount = amount;
         this.status = ReservationStatus.RESERVED;
-        this.createdAt = Instant.now();
+        this.createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         this.updatedAt = this.createdAt;
     }
 
@@ -70,6 +71,6 @@ public class Reservation {
             throw new IllegalStateException("Reserva " + paymentId + " está " + status + " e não pode ir para " + target);
         }
         this.status = target;
-        this.updatedAt = Instant.now();
+        this.updatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 }

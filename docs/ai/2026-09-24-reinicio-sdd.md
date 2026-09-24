@@ -157,3 +157,36 @@ Escolhido: fechar a S1 com a demo por `curl`, limpar e commitar S0 e S1, depois 
   - os tópicos ganham sufixo aleatório por contexto, para eventos que sobram de uma classe de teste não serem consumidos pela seguinte;
   - `PaymentJourneyIT` confere que A pagando X gera exatamente um `spp.payment.confirmed` com `paymentId`, CNPJ, valor e `creditedAt`, e que pagamentos `FAILED` não geram evento.
 - `./mvnw clean test` verde, com 69 testes em cerca de 23 segundos.
+
+## Prompt 9 — Commitar a S2 e seguir para a S3
+
+Escolhido: commitar a S2 e iniciar a S3 (idempotência e concorrência).
+
+### Resposta (resumo)
+
+S2 commitada. Tarefas T040–T045 implementadas, com os testes escritos antes das correções:
+
+- `PaymentsIdempotencyIT`, com Client A pagando X por HTTP:
+  - mesma chave e mesmos dados devolve o mesmo pagamento e cobra uma vez;
+  - mesma chave com outros dados devolve `409` com `code` `IDEMPOTENCY_CONFLICT`;
+  - 10 `POST` simultâneos com a mesma chave criam um pagamento só.
+- `ReserveServiceIT`:
+  - reservar, confirmar e liberar duas vezes movem saldo uma vez;
+  - reservar de novo com outros dados é conflito;
+  - 10 reservas simultâneas de 100 numa conta com 500 aceitam exatamente 5;
+  - 10 reservas simultâneas com o mesmo `paymentId` reservam uma vez.
+- `DuplicateEventsIT`, que publica mensagens cruas no Kafka e espera o grupo de consumo processar tudo:
+  - `PaymentDebited` repetido credita o merchant uma vez, e cada entrega republica a confirmação;
+  - `PaymentConfirmed` repetido não altera um pagamento `CONFIRMED`, nem um `FAILED`.
+
+Problemas que os testes revelaram e correções:
+
+- **`POST` simultâneo com a mesma chave:** as duas transações não achavam o pagamento, as duas inseriam, e uma estourava a chave primária (`500`).
+  - A intenção passou a ser gravada com `INSERT ... ON CONFLICT (id) DO NOTHING`, e a porta `PaymentIntentStore` ganhou `insertIfAbsent`. O Postgres faz a segunda transação esperar a primeira e devolve 0 linhas; ela então lê o pagamento gravado e compara os dados.
+- **Reserva simultânea com o mesmo `paymentId`:** as duas faziam o `UPDATE` condicional e uma estourava a chave primária. O saldo ficava certo, porque a transação que falhava era desfeita, mas quem chamava recebia erro técnico.
+  - `ReserveService.reserve` agora trava a conta (`PESSIMISTIC_WRITE`) antes de procurar a reserva existente. Pedidos para a mesma conta entram em fila, e o segundo encontra a reserva do primeiro.
+- **`creditedAt` inconsistente:** a primeira confirmação usava o instante em memória (nanossegundos), e a republicada lia do Postgres (microssegundos). O mesmo recebível aparecia com dois valores.
+  - Instantes das entidades truncados para microssegundos.
+- A mesma chave com dados diferentes voltava `202`. `PaymentService.accept` agora compara os dados e lança `IdempotencyConflictException`, que o `IdempotencyConflictExceptionHandler` traduz em `409`.
+
+`./mvnw clean test` verde, com 83 testes.

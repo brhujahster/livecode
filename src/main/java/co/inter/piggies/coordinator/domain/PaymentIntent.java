@@ -13,6 +13,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -68,7 +69,7 @@ public class PaymentIntent {
         this.merchantCnpj = merchantCnpj;
         this.amount = amount;
         this.stage = Stage.ACCEPTED;
-        this.createdAt = Instant.now();
+        this.createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         this.updatedAt = this.createdAt;
     }
 
@@ -101,6 +102,6 @@ public class PaymentIntent {
             throw new IllegalStateException("Pagamento " + id + " está " + stage + " e não pode ir para " + target);
         }
         this.stage = target;
-        this.updatedAt = Instant.now();
+        this.updatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 }

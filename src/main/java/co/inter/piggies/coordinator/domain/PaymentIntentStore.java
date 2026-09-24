@@ -7,7 +7,13 @@ public interface PaymentIntentStore {
 
     Optional<PaymentIntent> findById(UUID id);
 
-    PaymentIntent insert(PaymentIntent intent);
+    /**
+     * Grava a intenção se ainda não existir outra com o mesmo id. Se houver uma gravação concorrente em andamento,
+     * espera ela terminar em vez de falhar.
+     *
+     * @return {@code true} se esta chamada criou a intenção
+     */
+    boolean insertIfAbsent(PaymentIntent intent);
 
     PaymentIntent update(PaymentIntent intent);
 }

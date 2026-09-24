@@ -15,6 +15,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -49,6 +50,7 @@ public class Receivable {
         this.merchant = merchant;
         this.amount = amount;
         this.status = ReceivableStatus.CREDITED;
-        this.creditedAt = Instant.now();
+        // Precisão do Postgres: a confirmação republicada lê do banco e precisa trazer o mesmo creditedAt.
+        this.creditedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 }

@@ -7,10 +7,29 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PaymentServiceTest {
 
     private final PaymentService payments = new PaymentService(new InMemoryPaymentIntentStore());
+
+    @Test
+    void sameKeyWithSameDataReturnsTheExistingPayment() {
+        UUID id = accept();
+
+        PaymentService.Accepted repeated = payments.accept(payment(id, 100));
+
+        assertThat(repeated.created()).isFalse();
+        assertThat(repeated.intent().getId()).isEqualTo(id);
+    }
+
+    @Test
+    void sameKeyWithDifferentDataIsConflict() {
+        UUID id = accept();
+
+        assertThatThrownBy(() -> payments.accept(payment(id, 101)))
+                .isInstanceOf(IdempotencyConflictException.class);
+    }
 
     @Test
     void creditConfirmationClosesADebitedPayment() {
@@ -48,8 +67,12 @@ class PaymentServiceTest {
 
     private UUID accept() {
         UUID id = UUID.randomUUID();
-        payments.accept(new NewPayment(id, "12345678901", "0001", "000123", "12345678000199", 100));
+        payments.accept(payment(id, 100));
         return id;
+    }
+
+    private static NewPayment payment(UUID id, long amount) {
+        return new NewPayment(id, "12345678901", "0001", "000123", "12345678000199", amount);
     }
 
     private Stage stage(UUID id) {

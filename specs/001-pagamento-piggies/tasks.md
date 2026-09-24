@@ -96,12 +96,17 @@ Objetivo: crédito e fechamento passam por Kafka, com eventos validados contra o
 
 ## S3 — Idempotência e concorrência (US4, casos de borda)
 
-- [ ] **T040 [US4]** Teste em `PaymentsHttpIT`: mesma `Idempotency-Key` e mesmos dados devolve o mesmo `paymentId` e não cria segunda reserva; dados diferentes devolvem `409 IDEMPOTENCY_CONFLICT`.
-- [ ] **T041** Implementar a comparação no `PaymentService.accept` e o `409`.
-- [ ] **T042 [US4]** Teste em `ReserveServiceIT`: reservar, confirmar e liberar duas vezes movem saldo uma vez; reservar de novo com dados diferentes é conflito.
-- [ ] **T043 [US4]** Teste de integração: `spp.payment.debited` duplicado gera um recebível e um crédito; `spp.payment.confirmed` duplicado não altera o coordinator.
-- [ ] **T044** Teste de concorrência em `ReserveServiceIT`: 10 reservas simultâneas de 100 numa conta com 500 → exatamente 5 aceitas, reservado 500, disponível nunca negativo.
-- [ ] **T045** Ajustes que os testes T042–T044 revelarem.
+- [x] **T040 [US4]** Teste em `coordinator/web/PaymentsIdempotencyIT`: mesma `Idempotency-Key` e mesmos dados devolve o mesmo `paymentId` e cobra uma vez só; dados diferentes devolvem `409 IDEMPOTENCY_CONFLICT`; 10 pedidos simultâneos com a mesma chave criam um pagamento.
+- [x] **T041** Implementar a comparação no `PaymentService.accept` e o `409`.
+- [x] **T042 [US4]** Teste em `ReserveServiceIT`: reservar, confirmar e liberar duas vezes movem saldo uma vez; reservar de novo com dados diferentes é conflito.
+- [x] **T043 [US4]** Teste `journey/DuplicateEventsIT`: `spp.payment.debited` duplicado gera um recebível e um crédito; `spp.payment.confirmed` duplicado não altera o coordinator.
+- [x] **T044** Teste de concorrência em `ReserveServiceIT`: 10 reservas simultâneas de 100 numa conta com 500 → exatamente 5 aceitas, reservado 500, disponível nunca negativo.
+- [x] **T045** Ajustes que os testes revelaram:
+  - `POST` simultâneo com a mesma chave violava a chave primária (500): gravação com `INSERT ... ON CONFLICT DO NOTHING`;
+  - reserva simultânea com o mesmo `paymentId` violava a chave primária: a conta é travada antes de procurar a reserva;
+  - `creditedAt` da confirmação republicada diferia da primeira (nanossegundos em memória, microssegundos no banco): instantes truncados para microssegundos nas entidades.
+
+**Checkpoint S3:** atingido em 24/09/2026 (83 testes).
 
 ## S4 — Resiliência e APIs internas
 

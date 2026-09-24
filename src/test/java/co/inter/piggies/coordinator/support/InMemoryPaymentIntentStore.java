@@ -18,9 +18,8 @@ public class InMemoryPaymentIntentStore implements PaymentIntentStore {
     }
 
     @Override
-    public PaymentIntent insert(PaymentIntent intent) {
-        intents.put(intent.getId(), intent);
-        return intent;
+    public boolean insertIfAbsent(PaymentIntent intent) {
+        return intents.putIfAbsent(intent.getId(), intent) == null;
     }
 
     @Override

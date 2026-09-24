@@ -1,9 +1,15 @@
 package co.inter.piggies.coordinator.support;
 
+import io.micronaut.core.type.Argument;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.MediaType;
+import io.micronaut.http.client.HttpClient;
 
+import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
+
+import static org.awaitility.Awaitility.await;
 
 public final class PaymentRequests {
 
@@ -33,5 +39,14 @@ public final class PaymentRequests {
         return HttpRequest.POST("/v1/payments", body)
                 .contentType(MediaType.APPLICATION_JSON_TYPE)
                 .header("Idempotency-Key", idempotencyKey.toString());
+    }
+
+    /**
+     * Consulta o pagamento até ele sair de {@code PROCESSING}.
+     */
+    public static Map<String, Object> awaitFinal(HttpClient http, UUID paymentId) {
+        return await().atMost(Duration.ofSeconds(20)).until(
+                () -> http.toBlocking().retrieve(HttpRequest.GET("/v1/payments/" + paymentId), Argument.mapOf(String.class, Object.class)),
+                payment -> !"PROCESSING".equals(payment.get("status")));
     }
 }
