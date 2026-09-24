@@ -16,6 +16,7 @@ datasources:
     driver-class-name: org.postgresql.Driver
     db-type: postgres
     dialect: POSTGRES
+    connection-init-sql: CREATE SCHEMA IF NOT EXISTS spp_coordinator
 
 jpa:
   default:
@@ -23,6 +24,7 @@ jpa:
       hibernate:
         hbm2ddl:
           auto: update
+          create_namespaces: true
 
 kafka:
   bootstrap:

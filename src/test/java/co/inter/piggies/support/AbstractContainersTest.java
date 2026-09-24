@@ -34,6 +34,7 @@ public abstract class AbstractContainersTest implements TestPropertyProvider {
                 "datasources.default.driver-class-name", "org.postgresql.Driver",
                 "datasources.default.dialect", "POSTGRES",
                 "jpa.default.properties.hibernate.hbm2ddl.auto", "create-drop",
+                "jpa.default.properties.hibernate.hbm2ddl.create_namespaces", "true",
                 "kafka.bootstrap.servers", KAFKA.getBootstrapServers()
         );
     }

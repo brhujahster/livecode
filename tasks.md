@@ -4,12 +4,14 @@ Sistema de Pagamento com Porquinhos. Quatro pessoas, três serviços, um process
 
 Pacotes:
 
-| Pessoa | Pacote | Serviço |
-|---|---|---|
-| Dev 1 | `coordinator` | PiggiesPaymentCoordinator |
-| Dev 2 | `reserve` | PiggiesReserveService |
-| Dev 3 | `merchant` | PiggiesMerchantService |
-| Dev 4 | `messaging` | Eventos Kafka e teste de ponta a ponta |
+
+| Pessoa | Pacote        | Serviço                                |
+| ------ | ------------- | -------------------------------------- |
+| Dev 1  | `coordinator` | PiggiesPaymentCoordinator              |
+| Dev 2  | `reserve`     | PiggiesReserveService                  |
+| Dev 3  | `merchant`    | PiggiesMerchantService                 |
+| Dev 4  | `messaging`   | Eventos Kafka e teste de ponta a ponta |
+
 
 Ordem de corte se o tempo acabar:
 
@@ -24,7 +26,7 @@ Fora desta versão: valor fracionário, decodificação de imagem de QR, cancela
 
 Cada pessoa escreve o contrato do que vai implementar. Os campos congelam ao fim deste bloco.
 
-- [ ] **Dev 1** — `contracts/openapi/payments.openapi.yaml`
+- [x] **Dev 1** — `contracts/openapi/payments.openapi.yaml`
   - `POST /v1/payments` → `202` com `paymentId` e `status`
   - `GET /v1/payments/{id}` → intenção e status
   - Body: QR decodificado (`merchantCnpj`, `amount` inteiro) e pagador (`payerCpf`, `payerAgency`, `payerAccount`)
@@ -52,27 +54,35 @@ Schema `spp_coordinator`.
 
 ### Entidade
 
-- [ ] `PaymentIntent`: `id`, `payerCpf`, `payerAgency`, `payerAccount`, `merchantCnpj`, `amount`, `status` (`PROCESSING`, `CONFIRMED`, `FAILED`), `reservationId`, `failureReason`, `createdAt`, `updatedAt`
+- [x] `PaymentIntent`: `id`, `payerCpf`, `payerAgency`, `payerAccount`, `merchantCnpj`, `amount`, `status` (`PROCESSING`, `CONFIRMED`, `FAILED`), `reservationId`, `failureReason`, `createdAt`, `updatedAt`
+
+
 
 ### API
 
-- [ ] `POST /v1/payments` persiste a intenção em `PROCESSING` e responde `202`
-- [ ] `GET /v1/payments/{id}` devolve o estado atual
-- [ ] Validar amount inteiro e maior que zero
-- [ ] Repetir o mesmo `paymentId` devolve a intenção existente
+- [x] `POST /v1/payments` persiste a intenção em `PROCESSING` e responde `202`
+- [x] `GET /v1/payments/{id}` devolve o estado atual
+- [x] Validar amount inteiro e maior que zero
+- [x] Repetir o mesmo `paymentId` devolve a intenção existente
+
+
 
 ### Orquestração
 
-- [ ] Depois do `202`, chamar em paralelo reserva (`POST /v1/reservations`) e validação (`POST /v1/merchants/validate`)
-- [ ] Com os dois ok, pedir o débito (`POST /v1/reservations/{id}/confirm`) e publicar `spp.payment.confirm`
-- [ ] Marcar a intenção `CONFIRMED` ao observar o crédito concluído
-- [ ] Marcar `FAILED` com `failureReason` quando reserva ou validação recusar
-- [ ] Se a reserva foi criada e a validação falhou, chamar `POST /v1/reservations/{id}/release`
+- [x] Depois do `202`, chamar em paralelo reserva (`POST /v1/reservations`) e validação (`POST /v1/merchants/validate`)
+- [x] Com os dois ok, pedir o débito (`POST /v1/reservations/{id}/confirm`) e publicar `spp.payment.confirm`
+- [x] Marcar a intenção `CONFIRMED` ao observar o crédito concluído
+- [x] Marcar `FAILED` com `failureReason` quando reserva ou validação recusar
+- [x] Se a reserva foi criada e a validação falhou, chamar `POST /v1/reservations/{id}/release`
+
+
 
 ### Testes
 
-- [ ] Máquina de estados com clientes HTTP mockados: sucesso, merchant inativo, saldo insuficiente
-- [ ] `POST` responde `202` sem esperar o débito
+- [x] Máquina de estados com clientes HTTP mockados: sucesso, merchant inativo, saldo insuficiente
+- [x] `POST` responde `202` sem esperar o débito
+
+
 
 ## Dev 2 — PiggiesReserveService
 
@@ -96,6 +106,8 @@ Disponível = `balance − reservedBalance`.
 - [ ] Recusar amount não positivo e saldo insuficiente
 - [ ] Repetir a mesma operação com o mesmo `paymentIntentId` não move saldo de novo
 
+
+
 ### Testes
 
 - [ ] Reserva com saldo suficiente e com saldo insuficiente
@@ -103,9 +115,13 @@ Disponível = `balance − reservedBalance`.
 - [ ] Release após reserva restaura o disponível e não mexe em `balance`
 - [ ] Integração com PostgreSQL (Testcontainers)
 
+
+
 ### Dados de apoio
 
 - [ ] Seed do Cliente A com conta e saldo suficiente para o cenário de 100 Piggies
+
+
 
 ## Dev 3 — PiggiesMerchantService
 
@@ -118,11 +134,15 @@ Schema `spp_merchant`.
 - [ ] `Merchant`: `id`, `name`, `cnpj` único, `agency`, `accountNumber`, `status` (`ACTIVE`, `INACTIVE`)
 - [ ] `Receivable`: `id`, `paymentIntentId` único, `merchantId`, `amount`, `status` (`CREDITED`), `creditedAt`
 
+
+
 ### API
 
 - [ ] `POST /v1/merchants/validate` aceita merchant `ACTIVE` e recusa `INACTIVE` ou CNPJ desconhecido
 - [ ] `POST /v1/credits` grava o recebível `CREDITED` para um merchant ativo
 - [ ] Repetir o crédito do mesmo `paymentIntentId` não cria outro recebível
+
+
 
 ### Testes
 
@@ -130,9 +150,13 @@ Schema `spp_merchant`.
 - [ ] Crédito idempotente
 - [ ] Integração com PostgreSQL (Testcontainers)
 
+
+
 ### Dados de apoio
 
 - [ ] Seed do Merchant X ativo e de um merchant inativo para o caso de falha
+
+
 
 ## Dev 4 — Eventos e jornada completa
 
@@ -145,6 +169,8 @@ O merchant consome e publica eventos de pagamento. O teste de ponta a ponta prov
 - [ ] Producer de `spp.payment.confirmed` depois do crédito
 - [ ] Coordenar a leitura de `spp.payment.confirmed` para o coordinator fechar a intenção em `CONFIRMED`
 
+
+
 ### Teste de integração
 
 - [ ] Cliente A paga 100 Piggies ao Merchant X
@@ -153,6 +179,8 @@ O merchant consome e publica eventos de pagamento. O teste de ponta a ponta prov
 - [ ] Recebível de X no valor de 100
 - [ ] Mensagem em `spp.payment.confirmed` com `paymentId`, `merchantCnpj`, `amount` e `creditedAt`
 - [ ] Merchant inativo: intenção `FAILED`, reserva `RELEASED`, nenhum recebível e nenhum débito
+
+
 
 ## Dependências entre as frentes
 
