@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: PiggiesReserveService
+  version: 1.0.0
+  description: |
+    Serviço interno. Reserva, debita e libera saldo da conta do cliente.
+    Todas as operações de reserva são identificadas e idempotentes pelo
+    paymentId. Estado persistido em PostgreSQL (schema spp_reserve).
+servers:
+  - url: http://localhost:8080
+security: []
+tags:
+  - name: reservations
+    description: Reserva, débito e liberação de saldo por pagamento
+  - name: accounts
+    description: Consulta de contas de cliente
+paths:
+  /v1/reservations/{paymentId}:
+    parameters:
+      - $ref: "#/components/parameters/PaymentId"
+    put:
+      operationId: reserve
+      tags: [reservations]
+      summary: Reserva o valor na conta do cliente
+      description: |
+        Cria a reserva se o disponível (saldo menos reservado) cobre o valor.
+        Repetir com os mesmos dados devolve a reserva existente (200).
+        Repetir com dados diferentes devolve 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReserveRequest"
+            example:
+              cpf: "12345678901"
+              agency: "0001"
+              accountNumber: "000123"
+              amount: 100
+      responses:
+        "201":
+          description: Reserva criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "200":
+          description: Reserva já existia com os mesmos dados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Recusa de negócio
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                saldoInsuficiente:
+                  value:
+                    title: Saldo insuficiente
+                    status: 422
+                    code: INSUFFICIENT_BALANCE
+                contaNaoEncontrada:
+                  value:
+                    title: Conta do pagador não encontrada
+                    status: 422
+                    code: PAYER_ACCOUNT_NOT_FOUND
+    get:
+      operationId: getReservation
+      tags: [reservations]
+      summary: Consulta a reserva
+      responses:
+        "200":
+          description: Reserva
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/reservations/{paymentId}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/PaymentId"
+    post:
+      operationId: confirmReservation
+      tags: [reservations]
+      summary: Debita o valor reservado
+      description: |
+        Tira o valor do saldo e do reservado. Repetir numa reserva já
+        CONFIRMED devolve 200 sem debitar de novo. Reserva RELEASED devolve 409.
+      responses:
+        "200":
+          description: Reserva confirmada (debitada)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/reservations/{paymentId}/release:
+    parameters:
+      - $ref: "#/components/parameters/PaymentId"
+    post:
+      operationId: releaseReservation
+      tags: [reservations]
+      summary: Libera o valor reservado sem debitar
+      description: |
+        Devolve o valor ao disponível e não altera o saldo. Repetir numa
+        reserva já RELEASED devolve 200. Reserva CONFIRMED devolve 409.
+      responses:
+        "200":
+          description: Reserva liberada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/accounts/{agency}/{accountNumber}:
+    get:
+      operationId: getAccount
+      tags: [accounts]
+      summary: Consulta saldo, reservado e disponível de uma conta de cliente
+      parameters:
+        - name: agency
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]{4}$"
+        - name: accountNumber
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]{1,20}$"
+      responses:
+        "200":
+          description: Conta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+              example:
+                agency: "0001"
+                accountNumber: "000123"
+                ownerCpf: "12345678901"
+                balance: 400
+                reservedBalance: 0
+                availableBalance: 400
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  parameters:
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ReserveRequest:
+      type: object
+      required: [cpf, agency, accountNumber, amount]
+      properties:
+        cpf:
+          type: string
+          pattern: "^[0-9]{11}$"
+        agency:
+          type: string
+          pattern: "^[0-9]{4}$"
+        accountNumber:
+          type: string
+          pattern: "^[0-9]{1,20}$"
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+    ReservationStatus:
+      type: string
+      enum: [RESERVED, CONFIRMED, RELEASED]
+    Reservation:
+      type: object
+      required: [paymentId, agency, accountNumber, amount, status, createdAt, updatedAt]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        agency:
+          type: string
+        accountNumber:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ReservationStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Account:
+      type: object
+      required: [agency, accountNumber, ownerCpf, balance, reservedBalance, availableBalance]
+      properties:
+        agency:
+          type: string
+        accountNumber:
+          type: string
+        ownerCpf:
+          type: string
+        balance:
+          type: integer
+          format: int64
+        reservedBalance:
+          type: integer
+          format: int64
+        availableBalance:
+          type: integer
+          format: int64
+    Problem:
+      type: object
+      description: RFC 9457, com a extensão `code` para o motivo de negócio
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+  responses:
+    BadRequest:
+      description: Requisição inválida
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Transição inválida ou mesma chave com dados diferentes
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            transicao:
+              value:
+                title: Reserva já liberada
+                status: 409
+                code: INVALID_RESERVATION_TRANSITION
+            idempotencia:
+              value:
+                title: Reserva existente com outros dados
+                status: 409
+                code: IDEMPOTENCY_CONFLICT

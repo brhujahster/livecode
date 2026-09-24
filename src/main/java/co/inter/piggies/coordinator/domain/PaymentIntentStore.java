@@ -5,9 +5,9 @@ import java.util.UUID;
 
 public interface PaymentIntentStore {
 
-    Optional<PaymentIntentEntity> findById(UUID id);
+    Optional<PaymentIntent> findById(UUID id);
 
-    void insert(PaymentIntentEntity intent);
+    PaymentIntent insert(PaymentIntent intent);
 
-    void update(PaymentIntentEntity intent);
+    PaymentIntent update(PaymentIntent intent);
 }

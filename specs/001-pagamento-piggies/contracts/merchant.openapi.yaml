@@ -1,0 +1,157 @@
+openapi: 3.0.3
+info:
+  title: PiggiesMerchantService
+  version: 1.0.0
+  description: |
+    Serviço interno. Valida merchants e registra o crédito dos pagamentos.
+    Recebíveis e contas de merchant persistidos em PostgreSQL (schema spp_merchant).
+
+    O crédito não tem endpoint HTTP: acontece ao consumir `spp.payment.debited`
+    (events/payment-debited.v1.schema.json). Depois do crédito, publica
+    `spp.payment.confirmed` (events/payment-confirmed.v1.schema.json).
+servers:
+  - url: http://localhost:8080
+security: []
+tags:
+  - name: merchants
+    description: Consulta e validação de merchants
+  - name: receivables
+    description: Recebíveis creditados por pagamento
+paths:
+  /v1/merchants/{cnpj}:
+    get:
+      operationId: getMerchant
+      tags: [merchants]
+      summary: Consulta o merchant para validação
+      description: Um merchant é válido para receber quando existe e status é ACTIVE.
+      parameters:
+        - name: cnpj
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]{14}$"
+      responses:
+        "200":
+          description: Merchant encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+              example:
+                cnpj: "12345678000199"
+                name: Merchant X
+                status: ACTIVE
+                account:
+                  agency: "0001"
+                  accountNumber: "900001"
+                  balance: 100
+        "404":
+          description: Nenhum merchant com esse CNPJ
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                title: Merchant não encontrado
+                status: 404
+                code: MERCHANT_NOT_FOUND
+  /v1/receivables/{paymentId}:
+    get:
+      operationId: getReceivable
+      tags: [receivables]
+      summary: Consulta o recebível de um pagamento
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Recebível
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Receivable"
+              example:
+                paymentId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                merchantCnpj: "12345678000199"
+                amount: 100
+                status: CREDITED
+                creditedAt: "2026-09-24T22:00:01Z"
+        "404":
+          description: Nenhum recebível para esse pagamento
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                title: Recebível não encontrado
+                status: 404
+                code: RECEIVABLE_NOT_FOUND
+components:
+  schemas:
+    MerchantStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE]
+    MerchantAccount:
+      type: object
+      required: [agency, accountNumber, balance]
+      properties:
+        agency:
+          type: string
+        accountNumber:
+          type: string
+        balance:
+          type: integer
+          format: int64
+    Merchant:
+      type: object
+      required: [cnpj, name, status, account]
+      properties:
+        cnpj:
+          type: string
+        name:
+          type: string
+        status:
+          $ref: "#/components/schemas/MerchantStatus"
+        account:
+          $ref: "#/components/schemas/MerchantAccount"
+    ReceivableStatus:
+      type: string
+      enum: [CREDITED]
+    Receivable:
+      type: object
+      required: [paymentId, merchantCnpj, amount, status, creditedAt]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        merchantCnpj:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ReceivableStatus"
+        creditedAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      description: RFC 9457, com a extensão `code` para o motivo de negócio
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string

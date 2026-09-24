@@ -1,0 +1,249 @@
+openapi: 3.0.3
+info:
+  title: PiggiesPaymentCoordinator
+  version: 1.0.0
+  description: |
+    Borda pública do SPP. Registra a intenção de pagamento, responde 202 e
+    orquestra reserva, validação do merchant, débito e crédito em segundo plano.
+    O resultado é consultado pelo identificador do pagamento.
+
+    Publica `spp.payment.debited` (events/payment-debited.v1.schema.json).
+    Consome `spp.payment.confirmed` (events/payment-confirmed.v1.schema.json).
+servers:
+  - url: http://localhost:8080
+security: []
+tags:
+  - name: payments
+    description: Início e consulta de pagamentos
+paths:
+  /v1/payments:
+    post:
+      operationId: createPayment
+      tags: [payments]
+      summary: Inicia um pagamento a partir do QR Code decodificado
+      description: |
+        Grava a intenção e responde sem esperar o processamento.
+        Reenviar a mesma Idempotency-Key com os mesmos dados devolve o
+        pagamento existente e seu status atual. Com dados diferentes, 409.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequest"
+            example:
+              qrCode:
+                merchantCnpj: "12345678000199"
+                amount: 100
+              payer:
+                cpf: "12345678901"
+                agency: "0001"
+                accountNumber: "000123"
+      responses:
+        "202":
+          description: Pagamento aceito para processamento
+          headers:
+            Location:
+              description: URL para consultar o pagamento
+              schema:
+                type: string
+                example: /v1/payments/3fa85f64-5717-4562-b3fc-2c963f66afa6
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentAccepted"
+              example:
+                paymentId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                status: PROCESSING
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+  /v1/payments/{paymentId}:
+    get:
+      operationId: getPayment
+      tags: [payments]
+      summary: Consulta o pagamento
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Estado atual do pagamento
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+              examples:
+                confirmado:
+                  value:
+                    paymentId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    status: CONFIRMED
+                    qrCode:
+                      merchantCnpj: "12345678000199"
+                      amount: 100
+                    payer:
+                      cpf: "12345678901"
+                      agency: "0001"
+                      accountNumber: "000123"
+                    failureReason: null
+                    createdAt: "2026-09-24T22:00:00Z"
+                    updatedAt: "2026-09-24T22:00:01Z"
+                recusado:
+                  value:
+                    paymentId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                    status: FAILED
+                    qrCode:
+                      merchantCnpj: "98765432000155"
+                      amount: 100
+                    payer:
+                      cpf: "12345678901"
+                      agency: "0001"
+                      accountNumber: "000123"
+                    failureReason: MERCHANT_INACTIVE
+                    createdAt: "2026-09-24T22:05:00Z"
+                    updatedAt: "2026-09-24T22:05:00Z"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID gerado pelo app. Vira o identificador do pagamento.
+      schema:
+        type: string
+        format: uuid
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    CreatePaymentRequest:
+      type: object
+      required: [qrCode, payer]
+      properties:
+        qrCode:
+          $ref: "#/components/schemas/QrCode"
+        payer:
+          $ref: "#/components/schemas/Payer"
+    QrCode:
+      type: object
+      description: Conteúdo do QR Code já decodificado
+      required: [merchantCnpj, amount]
+      properties:
+        merchantCnpj:
+          type: string
+          pattern: "^[0-9]{14}$"
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Quantidade inteira de Piggies
+    Payer:
+      type: object
+      required: [cpf, agency, accountNumber]
+      properties:
+        cpf:
+          type: string
+          pattern: "^[0-9]{11}$"
+        agency:
+          type: string
+          pattern: "^[0-9]{4}$"
+        accountNumber:
+          type: string
+          pattern: "^[0-9]{1,20}$"
+    PaymentStatus:
+      type: string
+      enum: [PROCESSING, CONFIRMED, FAILED]
+    PaymentAccepted:
+      type: object
+      required: [paymentId, status]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+    Payment:
+      type: object
+      required: [paymentId, status, qrCode, payer, createdAt, updatedAt]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        qrCode:
+          $ref: "#/components/schemas/QrCode"
+        payer:
+          $ref: "#/components/schemas/Payer"
+        failureReason:
+          type: string
+          nullable: true
+          enum:
+            - PAYER_ACCOUNT_NOT_FOUND
+            - INSUFFICIENT_BALANCE
+            - MERCHANT_NOT_FOUND
+            - MERCHANT_INACTIVE
+            - null
+          description: Preenchido só quando status é FAILED
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      description: RFC 9457, com a extensão `code` para o motivo de negócio
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+  responses:
+    BadRequest:
+      description: Requisição inválida (amount não inteiro ou menor que 1, campo fora do formato)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            title: Requisição inválida
+            status: 400
+            detail: qrCode.amount deve ser um inteiro maior que zero
+            code: INVALID_REQUEST
+    IdempotencyConflict:
+      description: Idempotency-Key já usada com outros dados
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            title: Conflito de idempotência
+            status: 409
+            code: IDEMPOTENCY_CONFLICT
+    NotFound:
+      description: Pagamento não encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            title: Pagamento não encontrado
+            status: 404
+            code: PAYMENT_NOT_FOUND

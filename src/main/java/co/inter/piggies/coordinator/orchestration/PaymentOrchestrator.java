@@ -1,196 +1,107 @@
 package co.inter.piggies.coordinator.orchestration;
 
-import co.inter.piggies.coordinator.api.model.PaymentConfirmEvent;
-import co.inter.piggies.coordinator.api.model.PaymentConfirmedEvent;
-import co.inter.piggies.coordinator.api.model.PaymentStatus;
-import co.inter.piggies.coordinator.domain.FailureReasons;
-import co.inter.piggies.coordinator.domain.PaymentIntentEntity;
-import co.inter.piggies.coordinator.domain.PaymentIntentStore;
-import jakarta.annotation.PreDestroy;
+import co.inter.piggies.coordinator.domain.FailureReason;
+import co.inter.piggies.coordinator.domain.MerchantGateway;
+import co.inter.piggies.coordinator.domain.PaymentIntent;
+import co.inter.piggies.coordinator.domain.PaymentService;
+import co.inter.piggies.coordinator.domain.ReserveGateway;
+import co.inter.piggies.coordinator.domain.Stage;
+import io.micronaut.context.event.ShutdownEvent;
+import io.micronaut.runtime.event.annotation.EventListener;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.Function;
+import java.util.concurrent.TimeUnit;
 
+/**
+ * Leva um pagamento aceito até CONFIRMED ou FAILED. Reserva e validação do merchant rodam em paralelo.
+ * Uma falha técnica em qualquer etapa deixa o pagamento no estágio em que estava, para ser retomado depois.
+ */
 @Singleton
 public class PaymentOrchestrator {
 
-    private final PaymentIntentStore payments;
+    private static final Logger LOG = LoggerFactory.getLogger(PaymentOrchestrator.class);
+
+    private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(10);
+
+    private final PaymentService payments;
     private final ReserveGateway reserve;
     private final MerchantGateway merchant;
-    private final PaymentConfirmPublisher publisher;
-    private final ExecutorService parallel;
-    private final boolean shutdownParallel;
+    private final ExecutorService executor;
 
     @Inject
-    public PaymentOrchestrator(
-            PaymentIntentStore payments,
-            ReserveGateway reserve,
-            MerchantGateway merchant,
-            PaymentConfirmPublisher publisher
-    ) {
-        this(payments, reserve, merchant, publisher, newPool(), true);
+    public PaymentOrchestrator(PaymentService payments, ReserveGateway reserve, MerchantGateway merchant) {
+        this(payments, reserve, merchant,
+                Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("payment-", 0).factory()));
     }
 
-    public PaymentOrchestrator(
-            PaymentIntentStore payments,
-            ReserveGateway reserve,
-            MerchantGateway merchant,
-            PaymentConfirmPublisher publisher,
-            ExecutorService parallel
-    ) {
-        this(payments, reserve, merchant, publisher, parallel, false);
-    }
-
-    private PaymentOrchestrator(
-            PaymentIntentStore payments,
-            ReserveGateway reserve,
-            MerchantGateway merchant,
-            PaymentConfirmPublisher publisher,
-            ExecutorService parallel,
-            boolean shutdownParallel
-    ) {
+    PaymentOrchestrator(PaymentService payments, ReserveGateway reserve, MerchantGateway merchant,
+                        ExecutorService executor) {
         this.payments = payments;
         this.reserve = reserve;
         this.merchant = merchant;
-        this.publisher = publisher;
-        this.parallel = parallel;
-        this.shutdownParallel = shutdownParallel;
+        this.executor = executor;
     }
 
-    @Transactional
-    public void orchestrate(UUID paymentId) {
-        PaymentIntentEntity intent = payments.findById(paymentId).orElse(null);
-        if (intent == null || intent.getStatus() != PaymentStatus.PROCESSING) {
-            return;
+    public void start(UUID paymentId) {
+        executor.execute(() -> process(paymentId));
+    }
+
+    /**
+     * Espera os pagamentos em andamento antes de o banco ser fechado. Sem isso, uma etapa no meio de uma
+     * transação pode encontrar o contexto já desligado. O que não terminar no prazo fica no estágio atual.
+     * Usa o ShutdownEvent e não @PreDestroy porque o SessionFactory pode ser destruído antes deste bean.
+     */
+    @EventListener
+    void onShutdown(ShutdownEvent event) throws InterruptedException {
+        executor.shutdown();
+        if (!executor.awaitTermination(SHUTDOWN_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {
+            LOG.warn("Pagamentos ainda em andamento após {}; serão retomados depois", SHUTDOWN_GRACE);
+            executor.shutdownNow();
         }
-        CompletableFuture<ReserveOutcome> reserveFuture = CompletableFuture.supplyAsync(() -> reserve.reserve(intent), parallel);
-        CompletableFuture<MerchantOutcome> merchantFuture = CompletableFuture.supplyAsync(
-                () -> merchant.validate(intent.getMerchantCnpj()),
-                parallel
-        );
-        ReserveOutcome reserved = await(reserveFuture, ReserveOutcome::rejected);
-        MerchantOutcome validated = await(merchantFuture, MerchantOutcome::rejected);
+    }
 
-        boolean reserveFailed = !reserved.succeeded() || reserved.reservationId() == null;
-        if (reserveFailed || !validated.succeeded()) {
-            fail(intent, reserved.reservationId(), reason(reserved, validated));
-            return;
-        }
-
-        intent.attachReservation(reserved.reservationId());
-        payments.update(intent);
-
+    public void process(UUID paymentId) {
         try {
-            reserve.confirm(reserved.reservationId());
-        } catch (RuntimeException exception) {
-            fail(intent, reserved.reservationId(), rootMessage(exception));
-            return;
-        }
-
-        try {
-            publisher.publish(new PaymentConfirmEvent(
-                    intent.getId(),
-                    reserved.reservationId(),
-                    intent.getMerchantCnpj(),
-                    intent.getAmount()
-            ));
-        } catch (RuntimeException exception) {
-            intent.fail(FailureReasons.PUBLISH_FAILED);
-            payments.update(intent);
-        }
-    }
-
-    @Transactional
-    public void onCreditConfirmed(PaymentConfirmedEvent event) {
-        if (event == null || event.getPaymentId() == null) {
-            return;
-        }
-        PaymentIntentEntity intent = payments.findById(event.getPaymentId()).orElse(null);
-        if (intent == null || intent.getStatus() != PaymentStatus.PROCESSING || intent.getReservationId() == null) {
-            return;
-        }
-        if (event.getMerchantCnpj() == null
-                || !event.getMerchantCnpj().equals(intent.getMerchantCnpj())
-                || event.getAmount() == null
-                || event.getAmount() != intent.getAmount()) {
-            intent.fail(FailureReasons.DIVERGENT_CREDIT);
-            payments.update(intent);
-            return;
-        }
-        intent.confirm();
-        payments.update(intent);
-    }
-
-    @PreDestroy
-    void shutdown() {
-        if (shutdownParallel) {
-            parallel.shutdown();
-        }
-    }
-
-    private void fail(PaymentIntentEntity intent, UUID reservationId, String reason) {
-        if (reservationId != null) {
-            try {
-                reserve.release(reservationId);
-            } catch (RuntimeException exception) {
-                reason = reason + FailureReasons.RELEASE_FAILED_SUFFIX;
+            PaymentIntent intent = payments.find(paymentId).orElseThrow();
+            if (intent.getStage() != Stage.ACCEPTED) {
+                return;
             }
-        }
-        intent.fail(reason);
-        payments.update(intent);
-    }
-
-    private static String reason(ReserveOutcome reserved, MerchantOutcome validated) {
-        boolean reserveFailed = !reserved.succeeded() || reserved.reservationId() == null;
-        boolean merchantFailed = !validated.succeeded();
-        if (reserveFailed && merchantFailed) {
-            return text(reserved.failureReason()) + "; " + text(validated.failureReason());
-        }
-        if (reserveFailed) {
-            return text(reserved.failureReason());
-        }
-        return text(validated.failureReason());
-    }
-
-    private static String text(String reason) {
-        if (reason == null || reason.isBlank()) {
-            return FailureReasons.ORCHESTRATION_FAILED;
-        }
-        return reason.trim();
-    }
-
-    private static <T> T await(CompletableFuture<T> future, Function<String, T> rejected) {
-        try {
-            return future.join();
-        } catch (CompletionException exception) {
-            return rejected.apply(rootMessage(exception));
+            settle(intent);
+        } catch (RuntimeException e) {
+            LOG.error("Falha técnica ao processar o pagamento {}; ele fica no estágio atual", paymentId, e);
         }
     }
 
-    static String rootMessage(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null) {
-            current = current.getCause();
-        }
-        String message = current.getMessage();
-        if (message == null || message.isBlank()) {
-            return FailureReasons.ORCHESTRATION_FAILED;
-        }
-        return message;
-    }
+    private void settle(PaymentIntent intent) {
+        UUID paymentId = intent.getId();
+        var reservation = CompletableFuture.supplyAsync(() -> reserve.reserve(intent), executor);
+        var validation = CompletableFuture.supplyAsync(() -> merchant.validate(intent.getMerchantCnpj()), executor);
 
-    private static ExecutorService newPool() {
-        return Executors.newFixedThreadPool(4, runnable -> {
-            Thread thread = new Thread(runnable, "payment-parallel");
-            thread.setDaemon(true);
-            return thread;
-        });
+        Optional<FailureReason> reserveFailure = reservation.join();
+        Optional<FailureReason> merchantFailure = validation.join();
+
+        if (reserveFailure.isPresent()) {
+            payments.fail(paymentId, reserveFailure.get());
+            return;
+        }
+        if (merchantFailure.isPresent()) {
+            reserve.release(paymentId);
+            payments.fail(paymentId, merchantFailure.get());
+            return;
+        }
+
+        reserve.confirm(paymentId);
+        payments.markDebited(paymentId);
+        merchant.credit(paymentId, intent.getMerchantCnpj(), intent.getAmount());
+        payments.confirm(paymentId);
     }
 }

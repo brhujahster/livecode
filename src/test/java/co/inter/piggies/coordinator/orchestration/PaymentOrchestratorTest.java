@@ -1,24 +1,22 @@
 package co.inter.piggies.coordinator.orchestration;
 
-import co.inter.piggies.coordinator.api.model.PaymentConfirmEvent;
-import co.inter.piggies.coordinator.api.model.PaymentConfirmedEvent;
-import co.inter.piggies.coordinator.api.model.PaymentStatus;
-import co.inter.piggies.coordinator.domain.FailureReasons;
-import co.inter.piggies.coordinator.domain.PaymentIntentEntity;
-import co.inter.piggies.coordinator.domain.PaymentIntentStore;
+import co.inter.piggies.coordinator.domain.FailureReason;
+import co.inter.piggies.coordinator.domain.MerchantGateway;
+import co.inter.piggies.coordinator.domain.NewPayment;
+import co.inter.piggies.coordinator.domain.PaymentIntent;
+import co.inter.piggies.coordinator.domain.PaymentService;
+import co.inter.piggies.coordinator.domain.PaymentStatus;
+import co.inter.piggies.coordinator.domain.ReserveGateway;
+import co.inter.piggies.coordinator.domain.Stage;
+import co.inter.piggies.coordinator.support.InMemoryPaymentIntentStore;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -27,383 +25,192 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class PaymentOrchestratorTest {
 
-    private final UUID paymentId = UUID.fromString("3fa85f64-5717-4562-b3fc-2c963f66afa6");
-    private final UUID reservationId = UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    private static final String CNPJ = "12345678000199";
 
-    private ExecutorService pool;
-    private MemoryPayments payments;
-    private FakeReserve reserve;
-    private FakeMerchant merchant;
-    private FakePublisher publisher;
-    private PaymentOrchestrator orchestrator;
-
-    @BeforeEach
-    void setUp() {
-        pool = Executors.newFixedThreadPool(2, runnable -> {
-            Thread thread = new Thread(runnable);
-            thread.setDaemon(true);
-            return thread;
-        });
-        payments = new MemoryPayments();
-        reserve = new FakeReserve();
-        merchant = new FakeMerchant();
-        publisher = new FakePublisher();
-        reserve.outcome = ReserveOutcome.reserved(reservationId);
-        merchant.outcome = MerchantOutcome.accepted();
-        orchestrator = new PaymentOrchestrator(payments, reserve, merchant, publisher, pool);
-    }
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final PaymentService payments = new PaymentService(new InMemoryPaymentIntentStore());
+    private final FakeReserve reserve = new FakeReserve();
+    private final FakeMerchant merchant = new FakeMerchant();
+    private final PaymentOrchestrator orchestrator = new PaymentOrchestrator(payments, reserve, merchant, executor);
 
     @AfterEach
-    void tearDown() {
-        pool.shutdownNow();
+    void shutdown() {
+        executor.shutdownNow();
     }
 
     @Test
-    @Timeout(5)
-    void reservesAndValidatesInParallelThenPublishesWithoutConfirmingTheIntent() throws Exception {
-        var reserveEntered = new CountDownLatch(1);
-        var merchantEntered = new CountDownLatch(1);
-        reserve.before = () -> {
-            reserveEntered.countDown();
-            await(merchantEntered);
-        };
-        merchant.before = () -> {
-            merchantEntered.countDown();
-            await(reserveEntered);
-        };
-        payments.save(processing());
+    void confirmsWhenReserveAndMerchantSucceed() {
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.PROCESSING);
-        assertThat(stored.getReservationId()).isEqualTo(reservationId);
-        assertThat(reserve.confirms).containsExactly(reservationId);
-        assertThat(reserve.releases).isEmpty();
-        assertThat(publisher.events).containsExactly(new PaymentConfirmEvent(paymentId, reservationId, "12345678000199", 100L));
+        assertThat(intent(id).status()).isEqualTo(PaymentStatus.CONFIRMED);
+        assertThat(reserve.calls).containsExactly("reserve", "confirm");
+        assertThat(merchant.credits).containsExactly(id);
     }
 
     @Test
-    void marksFailedWhenMerchantIsInactiveAndReleasesTheReservation() {
-        merchant.outcome = MerchantOutcome.rejected(FailureReasons.MERCHANT_INACTIVE);
-        payments.save(processing());
+    void insufficientBalanceFailsWithoutRelease() {
+        reserve.failure = Optional.of(FailureReason.INSUFFICIENT_BALANCE);
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(stored.getFailureReason()).isEqualTo(FailureReasons.MERCHANT_INACTIVE);
-        assertThat(reserve.releases).containsExactly(reservationId);
-        assertThat(reserve.confirms).isEmpty();
-        assertThat(publisher.events).isEmpty();
+        assertThat(intent(id).status()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.INSUFFICIENT_BALANCE);
+        assertThat(reserve.calls).containsExactly("reserve");
+        assertThat(merchant.credits).isEmpty();
     }
 
     @Test
-    void marksFailedWhenBalanceIsInsufficientWithoutReleasing() {
-        reserve.outcome = ReserveOutcome.rejected(FailureReasons.INSUFFICIENT_FUNDS);
-        payments.save(processing());
+    void inactiveMerchantReleasesReservationAndFails() {
+        merchant.failure = Optional.of(FailureReason.MERCHANT_INACTIVE);
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(stored.getFailureReason()).isEqualTo(FailureReasons.INSUFFICIENT_FUNDS);
-        assertThat(reserve.releases).isEmpty();
-        assertThat(publisher.events).isEmpty();
+        assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.MERCHANT_INACTIVE);
+        assertThat(reserve.calls).containsExactly("reserve", "release");
+        assertThat(merchant.credits).isEmpty();
     }
 
     @Test
-    void keepsBothReasonsWhenReserveAndMerchantFail() {
-        reserve.outcome = ReserveOutcome.rejected(FailureReasons.ACCOUNT_NOT_FOUND);
-        merchant.outcome = MerchantOutcome.rejected(FailureReasons.MERCHANT_NOT_FOUND);
-        payments.save(processing());
+    void unknownMerchantReleasesReservationAndFails() {
+        merchant.failure = Optional.of(FailureReason.MERCHANT_NOT_FOUND);
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason())
-                .isEqualTo(FailureReasons.ACCOUNT_NOT_FOUND + "; " + FailureReasons.MERCHANT_NOT_FOUND);
-        assertThat(reserve.releases).isEmpty();
+        assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.MERCHANT_NOT_FOUND);
+        assertThat(reserve.calls).containsExactly("reserve", "release");
     }
 
     @Test
-    void normalizesBlankDownstreamReasons() {
-        reserve.outcome = ReserveOutcome.rejected("  ");
-        merchant.outcome = MerchantOutcome.rejected(null);
-        payments.save(processing());
+    void whenBothFailTheReserveReasonWins() {
+        reserve.failure = Optional.of(FailureReason.PAYER_ACCOUNT_NOT_FOUND);
+        merchant.failure = Optional.of(FailureReason.MERCHANT_INACTIVE);
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason())
-                .isEqualTo(FailureReasons.ORCHESTRATION_FAILED + "; " + FailureReasons.ORCHESTRATION_FAILED);
+        assertThat(intent(id).getFailureReason()).isEqualTo(FailureReason.PAYER_ACCOUNT_NOT_FOUND);
+        assertThat(reserve.calls).containsExactly("reserve");
     }
 
     @Test
-    void treatsSuccessfulReserveWithoutIdAsFailure() {
-        reserve.outcome = new ReserveOutcome(null, null, true);
-        payments.save(processing());
+    void technicalFailureKeepsThePaymentAccepted() {
+        reserve.explode = true;
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        assertThat(payments.findById(paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason()).isEqualTo(FailureReasons.ORCHESTRATION_FAILED);
-        assertThat(reserve.releases).isEmpty();
+        assertThat(intent(id).getStage()).isEqualTo(Stage.ACCEPTED);
+        assertThat(merchant.credits).isEmpty();
     }
 
     @Test
-    void releasesWhenDebitConfirmationFails() {
-        reserve.confirmError = new IllegalStateException("Reserva liberada não pode ser confirmada");
-        payments.save(processing());
+    void technicalFailureOnCreditKeepsThePaymentDebited() {
+        merchant.explodeOnCredit = true;
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(stored.getFailureReason()).isEqualTo("Reserva liberada não pode ser confirmada");
-        assertThat(stored.getReservationId()).isEqualTo(reservationId);
-        assertThat(reserve.releases).containsExactly(reservationId);
-        assertThat(publisher.events).isEmpty();
+        assertThat(intent(id).getStage()).isEqualTo(Stage.DEBITED);
     }
 
     @Test
-    void stillFailsWhenReleaseAlsoFails() {
-        merchant.outcome = MerchantOutcome.rejected(FailureReasons.MERCHANT_INACTIVE);
-        reserve.releaseError = new IllegalStateException("release down");
-        payments.save(processing());
+    void reserveAndMerchantValidationRunInParallel() {
+        CyclicBarrier bothRunning = new CyclicBarrier(2);
+        reserve.barrier = bothRunning;
+        merchant.barrier = bothRunning;
+        UUID id = accept();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason())
-                .isEqualTo(FailureReasons.MERCHANT_INACTIVE + FailureReasons.RELEASE_FAILED_SUFFIX);
+        assertThat(intent(id).status())
+                .as("se as duas etapas rodassem em sequência, a barreira estouraria o tempo e o pagamento não confirmaria")
+                .isEqualTo(PaymentStatus.CONFIRMED);
     }
 
     @Test
-    void doesNotReleaseWhenPublishingFailsAfterTheDebit() {
-        publisher.error = new IllegalStateException("kafka down");
-        payments.save(processing());
+    void ignoresPaymentsThatAlreadyLeftAccepted() {
+        UUID id = accept();
+        orchestrator.process(id);
+        reserve.calls.clear();
 
-        orchestrator.orchestrate(paymentId);
+        orchestrator.process(id);
 
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(stored.getFailureReason()).isEqualTo(FailureReasons.PUBLISH_FAILED);
-        assertThat(reserve.confirms).containsExactly(reservationId);
-        assertThat(reserve.releases).isEmpty();
+        assertThat(reserve.calls).isEmpty();
     }
 
-    @Test
-    void convertsUnexpectedDownstreamErrorsIntoFailure() {
-        reserve.error = new RuntimeException("timeout");
-        merchant.error = new IllegalStateException("  ");
-        payments.save(processing());
-
-        orchestrator.orchestrate(paymentId);
-
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason())
-                .isEqualTo("timeout; " + FailureReasons.ORCHESTRATION_FAILED);
-        assertThat(reserve.releases).isEmpty();
+    private UUID accept() {
+        UUID id = UUID.randomUUID();
+        payments.accept(new NewPayment(id, "12345678901", "0001", "000123", CNPJ, 100));
+        return id;
     }
 
-    @Test
-    void usesTheRootCauseWhenMerchantValidationCrashesAfterTheReserve() {
-        merchant.error = new RuntimeException(new IllegalStateException("merchant down"));
-        payments.save(processing());
-
-        orchestrator.orchestrate(paymentId);
-
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason()).isEqualTo("merchant down");
-        assertThat(reserve.releases).containsExactly(reservationId);
+    private PaymentIntent intent(UUID id) {
+        return payments.find(id).orElseThrow();
     }
 
-    @Test
-    void ignoresMissingAndTerminalIntents() {
-        orchestrator.orchestrate(paymentId);
-        assertThat(reserve.calls).isZero();
-
-        payments.save(processing());
-        payments.findById(paymentId).orElseThrow().fail("já falhou");
-        orchestrator.orchestrate(paymentId);
-        assertThat(reserve.calls).isZero();
-
-        var confirmed = processing();
-        confirmed.attachReservation(reservationId);
-        confirmed.confirm();
-        payments.save(confirmed);
-        orchestrator.orchestrate(paymentId);
-        assertThat(reserve.calls).isZero();
-    }
-
-    @Test
-    void confirmsTheIntentWhenTheCreditEventMatches() {
-        var intent = processing();
-        intent.attachReservation(reservationId);
-        payments.save(intent);
-
-        orchestrator.onCreditConfirmed(event("12345678000199", 100L));
-
-        PaymentIntentEntity stored = payments.findById(paymentId).orElseThrow();
-        assertThat(stored.getStatus()).isEqualTo(PaymentStatus.CONFIRMED);
-        assertThat(stored.getFailureReason()).isNull();
-    }
-
-    @Test
-    void rejectsDivergentCreditEvents() {
-        var intent = processing();
-        intent.attachReservation(reservationId);
-        payments.save(intent);
-
-        orchestrator.onCreditConfirmed(event(null, 100L));
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason()).isEqualTo(FailureReasons.DIVERGENT_CREDIT);
-
-        var otherCnpj = processing();
-        otherCnpj.attachReservation(reservationId);
-        payments.save(otherCnpj);
-        orchestrator.onCreditConfirmed(event("00000000000000", 100L));
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason()).isEqualTo(FailureReasons.DIVERGENT_CREDIT);
-
-        var missingAmount = processing();
-        missingAmount.attachReservation(reservationId);
-        payments.save(missingAmount);
-        orchestrator.onCreditConfirmed(event("12345678000199", null));
-        assertThat(payments.findById(paymentId).orElseThrow().getFailureReason()).isEqualTo(FailureReasons.DIVERGENT_CREDIT);
-
-        var otherAmount = processing();
-        otherAmount.attachReservation(reservationId);
-        payments.save(otherAmount);
-        orchestrator.onCreditConfirmed(event("12345678000199", 90L));
-        assertThat(payments.findById(paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(reserve.releases).isEmpty();
-    }
-
-    @Test
-    void ignoresCreditEventsThatCannotCloseTheIntent() {
-        orchestrator.onCreditConfirmed(null);
-        orchestrator.onCreditConfirmed(new PaymentConfirmedEvent(null, "12345678000199", 100L, ZonedDateTime.now(ZoneOffset.UTC)));
-        orchestrator.onCreditConfirmed(event("12345678000199", 100L));
-        assertThat(payments.rows).isEmpty();
-
-        var processing = processing();
-        payments.save(processing);
-        orchestrator.onCreditConfirmed(event("12345678000199", 100L));
-        assertThat(payments.findById(paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.PROCESSING);
-
-        processing.attachReservation(reservationId);
-        processing.confirm();
-        orchestrator.onCreditConfirmed(event("12345678000199", 100L));
-        assertThat(payments.findById(paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.CONFIRMED);
-
-        var failed = processing();
-        failed.fail(FailureReasons.INSUFFICIENT_FUNDS);
-        payments.save(failed);
-        orchestrator.onCreditConfirmed(event("12345678000199", 100L));
-        assertThat(payments.findById(paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
-    }
-
-    private PaymentIntentEntity processing() {
-        return PaymentIntentEntity.start(paymentId, "12345678901", "0001", "000123", "12345678000199", 100L, Instant.parse("2026-09-24T19:46:00Z"));
-    }
-
-    private PaymentConfirmedEvent event(String cnpj, Long amount) {
-        return new PaymentConfirmedEvent(paymentId, cnpj, amount, ZonedDateTime.parse("2026-09-24T19:46:02Z"));
-    }
-
-    private static void await(CountDownLatch latch) {
+    private static void await(CyclicBarrier barrier) {
+        if (barrier == null) {
+            return;
+        }
         try {
-            if (!latch.await(2, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("As chamadas não aconteceram em paralelo");
-            }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(exception);
+            barrier.await(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("etapas não rodaram em paralelo", e);
         }
     }
 
-    private final class FakeReserve implements ReserveGateway {
-        private ReserveOutcome outcome;
-        private RuntimeException error;
-        private RuntimeException confirmError;
-        private RuntimeException releaseError;
-        private Runnable before = () -> {
-        };
-        private final List<UUID> confirms = new ArrayList<>();
-        private final List<UUID> releases = new ArrayList<>();
-        private int calls;
+    private static final class FakeReserve implements ReserveGateway {
+
+        final List<String> calls = new ArrayList<>();
+        Optional<FailureReason> failure = Optional.empty();
+        boolean explode;
+        CyclicBarrier barrier;
 
         @Override
-        public ReserveOutcome reserve(PaymentIntentEntity intent) {
-            calls++;
-            before.run();
-            if (error != null) {
-                throw error;
+        public synchronized Optional<FailureReason> reserve(PaymentIntent intent) {
+            calls.add("reserve");
+            if (explode) {
+                throw new IllegalStateException("reserve fora do ar");
             }
-            return outcome;
+            await(barrier);
+            return failure;
         }
 
         @Override
-        public void confirm(UUID id) {
-            if (confirmError != null) {
-                throw confirmError;
-            }
-            confirms.add(id);
+        public synchronized void confirm(UUID paymentId) {
+            calls.add("confirm");
         }
 
         @Override
-        public void release(UUID id) {
-            if (releaseError != null) {
-                throw releaseError;
-            }
-            releases.add(id);
+        public synchronized void release(UUID paymentId) {
+            calls.add("release");
         }
     }
 
-    private final class FakeMerchant implements MerchantGateway {
-        private MerchantOutcome outcome;
-        private RuntimeException error;
-        private Runnable before = () -> {
-        };
+    private static final class FakeMerchant implements MerchantGateway {
+
+        final List<UUID> credits = new ArrayList<>();
+        Optional<FailureReason> failure = Optional.empty();
+        boolean explodeOnCredit;
+        CyclicBarrier barrier;
 
         @Override
-        public MerchantOutcome validate(String merchantCnpj) {
-            before.run();
-            if (error != null) {
-                throw error;
+        public Optional<FailureReason> validate(String merchantCnpj) {
+            await(barrier);
+            return failure;
+        }
+
+        @Override
+        public synchronized void credit(UUID paymentId, String merchantCnpj, long amount) {
+            if (explodeOnCredit) {
+                throw new IllegalStateException("merchant fora do ar");
             }
-            return outcome;
-        }
-    }
-
-    private static final class FakePublisher implements PaymentConfirmPublisher {
-        private final List<PaymentConfirmEvent> events = new ArrayList<>();
-        private RuntimeException error;
-
-        @Override
-        public void publish(PaymentConfirmEvent event) {
-            if (error != null) {
-                throw error;
-            }
-            events.add(event);
-        }
-    }
-
-    private static final class MemoryPayments implements PaymentIntentStore {
-        private final java.util.Map<UUID, PaymentIntentEntity> rows = new java.util.HashMap<>();
-
-        @Override
-        public Optional<PaymentIntentEntity> findById(UUID id) {
-            return Optional.ofNullable(rows.get(id));
-        }
-
-        @Override
-        public void insert(PaymentIntentEntity intent) {
-            rows.put(intent.getId(), intent);
-        }
-
-        @Override
-        public void update(PaymentIntentEntity intent) {
-            rows.put(intent.getId(), intent);
-        }
-
-        private void save(PaymentIntentEntity intent) {
-            rows.put(intent.getId(), intent);
+            credits.add(paymentId);
         }
     }
 }

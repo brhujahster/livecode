@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inter.co/spp/events/payment-confirmed.v1.schema.json",
+  "title": "PaymentConfirmed",
+  "description": "Publicado pelo PiggiesMerchantService no tópico spp.payment.confirmed depois que o merchant foi creditado. Consumido pelo PiggiesPaymentCoordinator para fechar o pagamento e por qualquer sistema interessado. Chave da mensagem: paymentId.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventVersion", "paymentId", "merchantCnpj", "amount", "creditedAt"],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador desta mensagem. Muda a cada republicação."
+    },
+    "eventVersion": {
+      "const": 1
+    },
+    "paymentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "merchantCnpj": {
+      "type": "string",
+      "pattern": "^[0-9]{14}$"
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Quantidade inteira de Piggies creditada ao merchant."
+    },
+    "creditedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "examples": [
+    {
+      "eventId": "5d2c1b9e-7f3a-4c8e-9b6d-2e1f0a9c8b7d",
+      "eventVersion": 1,
+      "paymentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "merchantCnpj": "12345678000199",
+      "amount": 100,
+      "creditedAt": "2026-09-24T22:00:01Z"
+    }
+  ]
+}

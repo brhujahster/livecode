@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inter.co/spp/events/payment-debited.v1.schema.json",
+  "title": "PaymentDebited",
+  "description": "Publicado pelo PiggiesPaymentCoordinator no tópico spp.payment.debited depois que o cliente foi debitado. Consumido pelo PiggiesMerchantService para creditar o merchant. Chave da mensagem: paymentId.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventVersion", "paymentId", "merchantCnpj", "amount", "debitedAt"],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador desta mensagem. Muda a cada republicação."
+    },
+    "eventVersion": {
+      "const": 1
+    },
+    "paymentId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Chave de idempotência do crédito."
+    },
+    "merchantCnpj": {
+      "type": "string",
+      "pattern": "^[0-9]{14}$"
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Quantidade inteira de Piggies debitada do cliente."
+    },
+    "debitedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "examples": [
+    {
+      "eventId": "0b7f7a0e-2a51-4a44-8d1f-6a3a8e7c1d10",
+      "eventVersion": 1,
+      "paymentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "merchantCnpj": "12345678000199",
+      "amount": 100,
+      "debitedAt": "2026-09-24T22:00:00Z"
+    }
+  ]
+}
