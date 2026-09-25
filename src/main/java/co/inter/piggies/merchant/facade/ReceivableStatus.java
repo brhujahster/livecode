@@ -1,4 +1,4 @@
-package co.inter.piggies.merchant.infra;
+package co.inter.piggies.merchant.facade;
 
 public enum ReceivableStatus {
     CREDITED

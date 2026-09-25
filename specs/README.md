@@ -16,4 +16,4 @@ Cada etapa só começa depois da revisão da anterior. Se a implementação reve
 
 | Id | Nome | Estado |
 |---|---|---|
-| 001 | [Pagamento com Piggies via QR Code](001-pagamento-piggies/spec.md) | [Plano](001-pagamento-piggies/plan.md) e [contratos](001-pagamento-piggies/contracts/) aprovados; [tarefas](001-pagamento-piggies/tasks.md) prontas |
+| 001 | [Pagamento com Piggies via QR Code](001-pagamento-piggies/spec.md) | [Plano](001-pagamento-piggies/plan.md) e [contratos](001-pagamento-piggies/contracts/) aprovados; [tarefas](001-pagamento-piggies/tasks.md) S0–S3, T051–T053 entregues, T050 pendente |

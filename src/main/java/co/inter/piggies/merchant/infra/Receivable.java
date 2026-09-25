@@ -1,5 +1,6 @@
 package co.inter.piggies.merchant.infra;
 
+import co.inter.piggies.merchant.facade.ReceivableStatus;
 import jakarta.persistence.CheckConstraint;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

@@ -190,3 +190,64 @@ Problemas que os testes revelaram e correções:
 - A mesma chave com dados diferentes voltava `202`. `PaymentService.accept` agora compara os dados e lança `IdempotencyConflictException`, que o `IdempotencyConflictExceptionHandler` traduz em `409`.
 
 `./mvnw clean test` verde, com 83 testes.
+
+## Prompt 10 — Commitar a S3 e fazer só o README
+
+Escolhido: commitar a S3 e fazer só o README (T053), deixando o resto da S4 (T050–T052) de fora.
+
+### Resposta (resumo)
+
+- S3 commitada.
+- `README.md` gerado pelo Micronaut, que só listava links de documentação, substituído por um README do projeto:
+  - o que o sistema faz e os três módulos;
+  - como rodar os testes e como subir localmente com `compose.yaml`;
+  - dados iniciais e jornada por `curl`, com os comandos verificados na demo da S1;
+  - fluxo do pagamento e garantias de idempotência e concorrência;
+  - limitações: sem reprocessamento de pagamentos presos e sem as APIs HTTP internas de `reserve` e `merchant`.
+- `tasks.md` e `specs/README.md` atualizados com o estado das tarefas.
+
+## Prompt 11 — Teste manual e comandos Kafka
+
+> como eu faço para testar manualmente esses serviços?
+
+> esse comando está retornando um erro docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh console-producer.sh: no such file or directory
+
+> sim
+
+### Resposta (resumo)
+
+- Explicado o roteiro manual: `docker compose up -d`, subir a aplicação e seguir a jornada por `curl` do README.
+- Causa do erro: a imagem `apache/kafka-native` é um binário nativo e não traz os scripts de `/opt/kafka/bin`.
+  - Solução: rodar os scripts pela imagem completa `apache/kafka:4.3.1` na rede do container do broker, com o alias
+    `kcli` (`docker run --rm -i --network container:live-code-kafka-1 apache/kafka:4.3.1`). Verificado com
+    `kafka-topics --list` e `kafka-consumer-groups`.
+- Com o "sim", o README ganhou as seções de Kafka (tópicos, consumir e publicar eventos com `kcli`) e de banco.
+
+## Prompt 12 — Seguir para a S4, dividida
+
+> siga para o S4
+
+> vamos dividir o s4 de outra forma, crie somente as apis HTTP do reserve e merchant, não crie o job
+
+### Resposta (resumo)
+
+Feitas só T051 e T052. O job de reprocessamento (T050) ficou de fora.
+
+- `reserve/web` implementa `reserve.openapi.yaml` usando só a fachada:
+  - `PUT /v1/reservations/{paymentId}` responde `201` quando cria e `200` quando a reserva já existia com os mesmos
+    dados. Para isso, `ReserveResult.Reserved` ganhou o campo `created`.
+  - Recusas de negócio viram `422` com `code` `INSUFFICIENT_BALANCE` ou `PAYER_ACCOUNT_NOT_FOUND`.
+  - `ReservationConflictException` vira `409` com o próprio código (`INVALID_RESERVATION_TRANSITION` ou
+    `IDEMPOTENCY_CONFLICT`); reserva inexistente vira `404 RESERVATION_NOT_FOUND`.
+  - `GET /v1/accounts/{agency}/{accountNumber}` devolve saldo, reservado e disponível, ou `404 ACCOUNT_NOT_FOUND`.
+- `merchant/web` implementa `merchant.openapi.yaml`:
+  - `GET /v1/merchants/{cnpj}` devolve a conta aninhada, ou `404 MERCHANT_NOT_FOUND`.
+  - `GET /v1/receivables/{paymentId}` devolve o recebível, ou `404 RECEIVABLE_NOT_FOUND`. `ReceivableStatus` foi
+    movido de `merchant.infra` para `merchant.facade`, e `ReceivableView` passou a expor o status.
+- Cada módulo tem seu próprio record de problema (`ReserveProblem`, `MerchantProblem`), para não depender de
+  `coordinator.web`. Os `400` de validação continuam saindo pelo processador global com `code` `INVALID_REQUEST`.
+- Testes `ReservationsHttpIT` (17) e `MerchantsHttpIT` (7) cobrem `201`/`200`/`404`/`409`/`422`/`400`, inclusive
+  `amount` `10.5` e `"100"`.
+- README, `tasks.md` e `specs/README.md` atualizados.
+
+`./mvnw test` verde, com 107 testes.

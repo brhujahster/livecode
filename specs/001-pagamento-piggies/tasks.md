@@ -111,9 +111,11 @@ Objetivo: crédito e fechamento passam por Kafka, com eventos validados contra o
 ## S4 — Resiliência e APIs internas
 
 - [ ] **T050** Job agendado de reprocessamento (D9): `ACCEPTED` parado há mais de 30 s refaz o fluxo; `DEBITED` republica o evento. Teste com intenções presas.
-- [ ] **T051 [P]** `reserve/web`: controllers de `reserve.openapi.yaml` sobre a fachada + teste HTTP.
-- [ ] **T052 [P]** `merchant/web`: controllers de `merchant.openapi.yaml` sobre a fachada + teste HTTP.
-- [ ] **T053** `README.md`: como subir Postgres e Kafka, rodar a aplicação e testar a jornada com `curl`.
+- [x] **T051 [P]** `reserve/web`: controllers de `reserve.openapi.yaml` sobre a fachada + teste HTTP (`ReservationsHttpIT`).
+- [x] **T052 [P]** `merchant/web`: controllers de `merchant.openapi.yaml` sobre a fachada + teste HTTP (`MerchantsHttpIT`).
+
+**Divisão da S4 (24/09/2026):** a pedido, primeiro só as APIs HTTP (T051, T052), com 107 testes verdes. O job T050 fica para uma entrega separada.
+- [x] **T053** `README.md`: como subir Postgres e Kafka, rodar a aplicação e testar a jornada com `curl`.
 
 ## Depois da S4
 

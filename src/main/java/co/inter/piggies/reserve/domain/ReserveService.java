@@ -48,7 +48,7 @@ public class ReserveService implements ReserveFacade {
 
         Optional<Reservation> existing = reservations.findById(command.paymentId());
         if (existing.isPresent()) {
-            return new ReserveResult.Reserved(sameRequestOrConflict(existing.get(), command));
+            return new ReserveResult.Reserved(sameRequestOrConflict(existing.get(), command), false);
         }
 
         Optional<Account> account = locked.filter(found -> found.getClient().getCpf().equals(command.cpf()));
@@ -60,7 +60,7 @@ public class ReserveService implements ReserveFacade {
             return new ReserveResult.Rejected(RejectionReason.INSUFFICIENT_BALANCE);
         }
         Reservation reservation = reservations.save(new Reservation(command.paymentId(), account.get(), command.amount()));
-        return new ReserveResult.Reserved(view(reservation));
+        return new ReserveResult.Reserved(view(reservation), true);
     }
 
     @Override

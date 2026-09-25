@@ -62,6 +62,6 @@ public class MerchantService implements MerchantFacade {
 
     private ReceivableView view(Receivable receivable) {
         return new ReceivableView(receivable.getPaymentId(), receivable.getMerchant().getCnpj(),
-                receivable.getAmount(), receivable.getCreditedAt());
+                receivable.getAmount(), receivable.getStatus(), receivable.getCreditedAt());
     }
 }

@@ -2,7 +2,10 @@ package co.inter.piggies.reserve.facade;
 
 public sealed interface ReserveResult {
 
-    record Reserved(ReservationView reservation) implements ReserveResult {
+    /**
+     * @param created {@code false} quando a reserva já existia com os mesmos dados
+     */
+    record Reserved(ReservationView reservation, boolean created) implements ReserveResult {
     }
 
     record Rejected(RejectionReason reason) implements ReserveResult {
